@@ -692,6 +692,330 @@ StepCollectors.hours = function(out){
 
 
 // ══════════════════════════════════════════════════════
+// 시술메뉴
+//  04_시술마스터 TAB_SPEC.cols 순서 = 카테고리·시술명·소요시간·정가·가격부가설명·시술설명·가격표노출·노출순서
+//  카테고리별 아코디언으로 묶어 보여주고, 저장 시에는 카테고리→노출순서로 평탄화해 그 순서 그대로 rows 에 담습니다.
+// ══════════════════════════════════════════════════════
+var MENU_FIELD_KEYS = ['category','name','duration','price','priceNote','desc','showPrice','order'];
+var MENU_CAPACITY = 40;
+
+function menuNewId_(){ return 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7); }
+
+function menuItemsFromData(data){
+  var rows = (data && data.rows) || [];
+  return rows.map(function(r, i){
+    return {
+      id: menuNewId_(),
+      category: r[0] || '', name: r[1] || '', duration: r[2] || '', price: r[3] || '',
+      priceNote: r[4] || '', desc: r[5] || '', showPrice: r[6] || 'Y', order: r[7] || (i + 1)
+    };
+  });
+}
+
+/** 렌더된 카드들에서 최신 값을 읽어옵니다 — 구조를 바꾸는 조작(추가·복제·삭제·이동) 전에 항상 먼저 부릅니다. */
+function menuReadDom_(host){
+  var items = [];
+  host.querySelectorAll('[data-menu-id]').forEach(function(card){
+    var it = { id: card.dataset.menuId };
+    MENU_FIELD_KEYS.forEach(function(k){
+      var n = card.querySelector('[data-menu-field="' + k + '"]');
+      it[k] = n ? n.value : '';
+    });
+    items.push(it);
+  });
+  return items;
+}
+
+/** 카테고리별로 묶고, 그 안에서 order 순으로 정렬한 뒤 order 를 1..N 으로 다시 매깁니다. */
+function menuGroupByCategory_(items){
+  var order = [], map = {};
+  items.forEach(function(it){
+    var cat = it.category || '(카테고리 없음)';
+    if (!map[cat]){ map[cat] = []; order.push(cat); }
+    map[cat].push(it);
+  });
+  order.forEach(function(cat){
+    map[cat].sort(function(a, b){ return (Number(a.order) || 0) - (Number(b.order) || 0); });
+    map[cat].forEach(function(it, i){ it.order = i + 1; });
+  });
+  return { order: order, map: map };
+}
+
+function menuMove_(items, id, dir){
+  var it = items.filter(function(x){ return x.id === id; })[0];
+  if (!it) return;
+  var siblings = items.filter(function(x){ return (x.category || '') === (it.category || ''); })
+                       .sort(function(a, b){ return (Number(a.order) || 0) - (Number(b.order) || 0); });
+  var idx = siblings.indexOf(it);
+  var swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= siblings.length) return;
+  var tmp = it.order; it.order = siblings[swapIdx].order; siblings[swapIdx].order = tmp;
+}
+
+function menuDuplicate_(items, id){
+  var it = items.filter(function(x){ return x.id === id; })[0];
+  if (!it) return;
+  var copy = {};
+  MENU_FIELD_KEYS.forEach(function(k){ copy[k] = it[k]; });
+  copy.id = menuNewId_();
+  copy.order = (Number(it.order) || 0) + 0.5;   // 다음 repaint 때 그 자리로 정렬되며 1..N 으로 재정리됩니다
+  items.push(copy);
+}
+
+/** 예약상품 단계가 아직 없어 항상 0입니다. 06_예약상품 rows 구조가 정해지면 시술명으로 대조하세요. */
+function menuProductCount_(name){ return 0; }
+
+function menuParsePaste_(text){
+  text = String(text || '').replace(/\r/g, '');
+  var lines = text.split('\n').filter(function(l){ return l.trim() !== ''; });
+  if (!lines.length) return [];
+  var delim = lines[0].indexOf('\t') !== -1 ? '\t' : ',';
+  return lines.map(function(line){
+    var cols = line.split(delim).map(function(c){ return c.trim(); });
+    return {
+      category: cols[0] || '', name: cols[1] || '',
+      duration: (cols[2] || '').replace(/,/g, ''), price: (cols[3] || '').replace(/,/g, ''),
+      priceNote: cols[4] || '', desc: cols[5] || '', showPrice: cols[6] || 'Y', order: cols[7] || ''
+    };
+  });
+}
+
+function menuPastePanel_(onImport){
+  var wrap = el('div','card');
+  wrap.appendChild(el('h3', null, '엑셀에서 붙여넣기'));
+  wrap.appendChild(el('p','hint',
+    '열 순서: 카테고리 · 시술명 · 소요시간(분) · 정가(원) · 가격부가설명 · 시술설명 · 가격표노출(Y/N) · 노출순서. ' +
+    '뒤쪽 열은 비워도 됩니다.'));
+
+  var ta = document.createElement('textarea');
+  ta.id = 'menuPasteArea';
+  ta.placeholder = '엑셀에서 여러 행을 복사해 여기에 붙여넣으세요';
+  ta.style.minHeight = '80px';
+  wrap.appendChild(ta);
+
+  var previewHost = el('div');
+  wrap.appendChild(previewHost);
+
+  var btnRow = el('div','row');
+  var previewBtn = el('button','ghost','미리보기'); previewBtn.type = 'button';
+  var importBtn = el('button', null, '일괄 추가'); importBtn.type = 'button'; importBtn.disabled = true;
+  btnRow.appendChild(previewBtn);
+  btnRow.appendChild(importBtn);
+  wrap.appendChild(btnRow);
+
+  var parsed = [];
+  previewBtn.addEventListener('click', function(){
+    parsed = menuParsePaste_(ta.value);
+    previewHost.innerHTML = '';
+    if (!parsed.length){
+      previewHost.appendChild(el('p','hint','인식된 행이 없습니다.'));
+      importBtn.disabled = true;
+      return;
+    }
+    var table = document.createElement('table'); table.className = 'mprev';
+    table.innerHTML = '<tr><th>카테고리</th><th>시술명</th><th>소요시간</th><th>정가</th></tr>' +
+      parsed.map(function(p){
+        return '<tr><td>' + esc(p.category) + '</td><td>' + esc(p.name) + '</td><td>' +
+               esc(p.duration) + '</td><td>' + esc(p.price) + '</td></tr>';
+      }).join('');
+    previewHost.appendChild(table);
+    previewHost.appendChild(el('p','hint', parsed.length + '행 인식됨 — 일괄 추가를 누르면 아래 목록에 더해집니다.'));
+    importBtn.disabled = false;
+  });
+
+  importBtn.addEventListener('click', function(){
+    onImport(parsed);
+    ta.value = '';
+    previewHost.innerHTML = '';
+    importBtn.disabled = true;
+  });
+
+  return wrap;
+}
+
+function menuField_(labelText, node){
+  var box = el('div');
+  box.appendChild(el('label', null, esc(labelText)));
+  box.appendChild(node);
+  return box;
+}
+
+function menuTextInput_(field, value, max){
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.dataset.menuField = field;
+  input.value = value || '';
+  if (max) input.maxLength = max;
+  return input;
+}
+
+function menuNumberInput_(field, value){
+  var input = document.createElement('input');
+  input.type = 'number';
+  input.dataset.menuField = field;
+  input.value = value || '';
+  return input;
+}
+
+function menuCard_(it, isFirst, isLast, handlers){
+  var card = el('div','menu-card');
+  card.dataset.menuId = it.id;
+
+  var actions = el('div','menu-actions');
+  actions.appendChild(el('span','meta','예약상품 ' + menuProductCount_(it.name) + '개'));
+  var upBtn = el('button','ghost','↑'); upBtn.type = 'button'; upBtn.disabled = isFirst;
+  upBtn.addEventListener('click', function(){ handlers.onMove('up'); });
+  var downBtn = el('button','ghost','↓'); downBtn.type = 'button'; downBtn.disabled = isLast;
+  downBtn.addEventListener('click', function(){ handlers.onMove('down'); });
+  var dupBtn = el('button','ghost','복제'); dupBtn.type = 'button';
+  dupBtn.addEventListener('click', handlers.onDuplicate);
+  var delBtn = el('button','ghost','삭제'); delBtn.type = 'button';
+  delBtn.style.color = 'var(--err)'; delBtn.style.borderColor = '#EBC7C2';
+  delBtn.addEventListener('click', function(){ if (confirm('이 시술을 삭제할까요?')) handlers.onDelete(); });
+  [upBtn, downBtn, dupBtn, delBtn].forEach(function(b){ actions.appendChild(b); });
+  card.appendChild(actions);
+
+  var catInput = menuTextInput_('category', it.category);
+  catInput.addEventListener('change', handlers.onCategoryChange);
+  card.appendChild(menuField_('카테고리', catInput));
+
+  card.appendChild(menuField_('시술명 (30자)', menuTextInput_('name', it.name, 30)));
+
+  var line1 = el('div','row');
+  line1.appendChild(menuField_('소요시간(분)', menuNumberInput_('duration', it.duration)));
+  var priceBox = menuField_('정가(원)', menuNumberInput_('price', it.price));
+  line1.appendChild(priceBox);
+  card.appendChild(line1);
+  card.appendChild(el('p','hint','할인가는 예약상품에서 설정합니다.'));
+
+  card.appendChild(menuField_('가격 부가설명 (96자)', menuTextInput_('priceNote', it.priceNote, 96)));
+
+  var descBox = menuField_('시술 설명 (300자)', (function(){
+    var ta = document.createElement('textarea');
+    ta.dataset.menuField = 'desc';
+    ta.maxLength = 300;
+    ta.value = it.desc || '';
+    ta.style.minHeight = '70px';
+    return ta;
+  })());
+  card.appendChild(descBox);
+
+  var showSel = document.createElement('select');
+  showSel.dataset.menuField = 'showPrice';
+  [['Y','노출'], ['N','비노출']].forEach(function(p){
+    var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
+    if ((it.showPrice || 'Y') === p[0]) o.selected = true;
+    showSel.appendChild(o);
+  });
+  card.appendChild(menuField_('가격표 노출', showSel));
+
+  var orderInput = document.createElement('input');
+  orderInput.type = 'hidden';
+  orderInput.dataset.menuField = 'order';
+  orderInput.value = it.order;
+  card.appendChild(orderInput);
+
+  return card;
+}
+
+StepRenderers.menu = function(body, data){
+  body.appendChild(el('h2','page-h','시술메뉴'));
+  body.appendChild(el('p','page-sub',
+    '모든 시술은 여기에 정가로 한 번만 등록합니다. 할인가는 예약상품에서 설정합니다. ' +
+    '같은 시술이라도 소요시간이 다르면(60분·90분) 각각 등록하세요.'));
+
+  var items = menuItemsFromData(data);
+  var openCats = {};
+
+  var host = el('div');
+
+  function syncFromDom_(){
+    var live = menuReadDom_(host);
+    if (live.length) items = live;
+  }
+
+  function repaint(){
+    host.innerHTML = '';
+    var g = menuGroupByCategory_(items);
+
+    if (!g.order.length){
+      host.appendChild(el('div','placeholder','아직 등록한 시술이 없습니다. 위에서 붙여넣거나 아래에서 추가하세요.'));
+    }
+
+    g.order.forEach(function(cat){
+      var list = g.map[cat];
+      var acc = el('div','card');
+      var isOpen = openCats[cat] !== false;
+
+      var head = el('div','acc-head');
+      head.innerHTML = '<h3 style="margin:0">' + esc(cat) + ' <span class="meta">(' + list.length + '개)</span></h3>';
+      var caret = el('span','acc-caret', isOpen ? '▾' : '▸');
+      head.appendChild(caret);
+      head.addEventListener('click', function(){ openCats[cat] = !isOpen; repaint(); });
+      acc.appendChild(head);
+
+      var listHost = el('div');
+      listHost.classList.toggle('hidden', !isOpen);
+      list.forEach(function(it, idx){
+        listHost.appendChild(menuCard_(it, idx === 0, idx === list.length - 1, {
+          onCategoryChange: function(){ syncFromDom_(); repaint(); touch(); },
+          onDuplicate: function(){ syncFromDom_(); menuDuplicate_(items, it.id); repaint(); touch(); },
+          onDelete: function(){ syncFromDom_(); items = items.filter(function(x){ return x.id !== it.id; }); repaint(); touch(); },
+          onMove: function(dir){ syncFromDom_(); menuMove_(items, it.id, dir); repaint(); touch(); }
+        }));
+      });
+      acc.appendChild(listHost);
+      host.appendChild(acc);
+    });
+
+    var addBtn = el('button','ghost','+ 새 시술 추가');
+    addBtn.type = 'button';
+    addBtn.addEventListener('click', function(){
+      syncFromDom_();
+      if (items.length >= MENU_CAPACITY){ toast('시술은 최대 ' + MENU_CAPACITY + '개까지 등록할 수 있습니다.'); return; }
+      var lastCat = g.order.length ? g.order[g.order.length - 1] : '';
+      items.push({
+        id: menuNewId_(), category: lastCat === '(카테고리 없음)' ? '' : lastCat,
+        name: '', duration: '', price: '', priceNote: '', desc: '', showPrice: 'Y', order: 999
+      });
+      openCats[lastCat || '(카테고리 없음)'] = true;
+      repaint();
+      touch();
+    });
+    host.appendChild(addBtn);
+  }
+
+  body.appendChild(menuPastePanel_(function(parsedRows){
+    syncFromDom_();
+    parsedRows.forEach(function(p){
+      items.push({
+        id: menuNewId_(), category: p.category, name: p.name, duration: p.duration, price: p.price,
+        priceNote: p.priceNote, desc: p.desc, showPrice: p.showPrice || 'Y', order: 999
+      });
+      openCats[p.category || '(카테고리 없음)'] = true;
+    });
+    repaint();
+    touch();
+  }));
+
+  body.appendChild(host);
+  repaint();
+};
+
+StepCollectors.menu = function(){
+  var host = document.querySelector('#stepBody');
+  var items = menuReadDom_(host);
+  var g = menuGroupByCategory_(items);
+  var flat = [];
+  g.order.forEach(function(cat){ g.map[cat].forEach(function(it){ flat.push(it); }); });
+  var rows = flat.slice(0, MENU_CAPACITY).map(function(it){
+    return [it.category, it.name, it.duration, it.price, it.priceNote, it.desc, it.showPrice, it.order];
+  });
+  return { rows: rows };
+};
+
+
+// ══════════════════════════════════════════════════════
 // 이미지 단계 — 실제 동작
 // ══════════════════════════════════════════════════════
 StepRenderers.image = function(body, data){
