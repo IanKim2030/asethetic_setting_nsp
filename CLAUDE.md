@@ -141,10 +141,13 @@ StepRenderers.hours = function(body, data){
 - 한국어로 대화한다
 - Apps Script는 로컬 테스트가 안 되므로, 코드 수정 후 **`node --check`로 구문만이라도 검증**한다
   (`.gs`를 `.js`로 복사해서 검사)
-- **시트 동기화를 고쳤으면 `test_sheetsync.js`를 돌린다.**
-  가짜 시트 격자로 수식 열 보존·중복 항목명·블록 경계를 확인한다.
+- **로직을 고쳤으면 `npm run verify`를 돌린다.** `test/` 아래에 파일별 오프라인 테스트가 있다
+  (`test_sheetsync.js`·`test_webapp.js`·`test_session.js`·`test_upload.js`·`test_notify.js`, 공용 도구는 `test/testkit.js`).
+  시트 동기화만 따로 보려면:
   ```
-  node test_sheetsync.js 03_SheetSync.gs
+  node test/test_sheetsync.js 03_SheetSync.gs
   ```
+  Google 서비스(`SpreadsheetApp`/`DriveApp`/`MailApp` 등)가 실제로 얽힌 동작(진입 인증·자동저장·이미지 업로드·
+  시트 반영·메일 발송·복원)은 로컬 테스트로 못 잡으므로 `QA_CHECKLIST.md`를 따라 배포본에서 직접 확인한다.
 - 파일을 새로 만들기 전에 설계 문서에 이미 정해진 게 있는지 확인한다
 - 설계와 다른 판단을 하게 되면 먼저 이유를 설명하고 확인받는다

@@ -6,7 +6,7 @@
   "scripts": {
     "check": "node tools/check.js",
     "dupcheck": "node tools/dupcheck.js .",
-    "test": "node test_sheetsync.js 03_SheetSync.gs",
+    "test": "node test/test_webapp.js && node test/test_session.js && node test/test_upload.js && node test/test_notify.js && node test/test_sheetsync.js 03_SheetSync.gs",
     "verify": "npm run check && npm run dupcheck && npm test"
   },
   "devDependencies": {

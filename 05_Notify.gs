@@ -13,6 +13,18 @@ function notifySubmit_(s, isFirst, diff, progress) {
                 (isFirst ? '제출' : '수정 — v' + s.version);
 
   var issues = collectIssues_(s);
+  var folderUrl = '';
+  try { folderUrl = shopFolder_(s.id).getUrl(); } catch (e) {}
+
+  MailApp.sendEmail({
+    to: NOTIFY_EMAIL,
+    subject: subject,
+    body: buildNotifyBody_(s, isFirst, diff, progress, issues, folderUrl)
+  });
+}
+
+/** 메일 본문 조립 — MailApp 을 직접 부르지 않는 순수 함수라 오프라인에서 테스트할 수 있습니다. */
+function buildNotifyBody_(s, isFirst, diff, progress, issues, folderUrl) {
   var asks = issues.filter(function (i) { return i.level === 'ask'; });
   var warns = issues.filter(function (i) { return i.level === 'warn'; });
 
@@ -41,16 +53,10 @@ function notifySubmit_(s, isFirst, diff, progress) {
     lines.push('');
   }
 
-  var folderUrl = '';
-  try { folderUrl = shopFolder_(s.id).getUrl(); } catch (e) {}
   if (s.sheetUrl) lines.push('세팅시트  ' + s.sheetUrl);
   if (folderUrl) lines.push('드라이브  ' + folderUrl);
 
-  MailApp.sendEmail({
-    to: NOTIFY_EMAIL,
-    subject: subject,
-    body: lines.join('\n')
-  });
+  return lines.join('\n');
 }
 
 function stepTitle_(key) {

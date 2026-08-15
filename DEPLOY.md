@@ -86,5 +86,5 @@ GitHub 리포 → Settings → Secrets and variables → Actions → **New repos
 | `*.gs` `*.html` `appsscript.json` | 실제 코드 | O | **O** |
 | `.clasp.json` | 스크립트 ID·rootDir | O | X |
 | `.claspignore` | push 대상 allowlist | O | X |
-| `package.json` `tools/` `test_sheetsync.js` | 검증 도구 | O | X |
+| `package.json` `tools/` `test/` `QA_CHECKLIST.md` | 검증 도구·QA 절차 | O | X |
 | `.clasprc.json` | 인증 토큰 | **X** | X |
