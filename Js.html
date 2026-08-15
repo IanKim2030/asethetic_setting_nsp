@@ -335,7 +335,6 @@ StepRenderers.basic = function(body, data){
 function field(label, type, cur, opt){
   opt = opt || {};
   var v = (cur && typeof cur === 'object') ? cur.v : (cur || '');
-  var st = (cur && typeof cur === 'object') ? cur.st : '';
 
   var box = el('div');
   var lab = el('label', null, esc(label) + (opt.required ? ' <span style="color:#C0392B">*</span>' : ''));
@@ -356,16 +355,6 @@ function field(label, type, cur, opt){
   }
   if (opt.hint) box.appendChild(el('p','hint', esc(opt.hint)));
 
-  var sel = document.createElement('select');
-  sel.dataset.st = label;
-  ['', '입력완료', '미입력', '상담필요'].forEach(function(o){
-    var op = document.createElement('option');
-    op.value = o; op.textContent = o || '상태 선택';
-    if (o === st) op.selected = true;
-    sel.appendChild(op);
-  });
-  sel.style.marginTop = '6px';
-  box.appendChild(sel);
   box.appendChild(el('div', null, '<div style="height:14px"></div>'));
   return box;
 }
