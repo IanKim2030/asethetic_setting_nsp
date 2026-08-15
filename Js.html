@@ -833,6 +833,20 @@ function menuPastePanel_(onImport){
   return wrap;
 }
 
+function menuPreviewTable_(list){
+  var table = document.createElement('table'); table.className = 'mprev';
+  table.innerHTML = '<tr><th>시술명</th><th>소요시간</th><th>정가</th></tr>' +
+    list.map(function(it){
+      var priceTxt = '-';
+      if (it.price !== '' && it.price !== undefined && it.price !== null){
+        priceTxt = isNaN(Number(it.price)) ? String(it.price) : Number(it.price).toLocaleString() + '원';
+      }
+      return '<tr><td>' + esc(it.name || '(이름 없음)') + '</td><td>' +
+             esc(it.duration ? it.duration + '분' : '-') + '</td><td>' + esc(priceTxt) + '</td></tr>';
+    }).join('');
+  return table;
+}
+
 function menuField_(labelText, node){
   var box = el('div');
   box.appendChild(el('label', null, esc(labelText)));
@@ -926,6 +940,24 @@ StepRenderers.menu = function(body, data){
 
   var items = menuItemsFromData(data);
   var openCats = {};
+  var mode = 'single';
+
+  var modeBar = el('div','row');
+  modeBar.style.marginBottom = '14px';
+  var singleTab = el('button', null, '하나씩 입력');
+  var pasteTab = el('button','ghost','엑셀 붙여넣기');
+  singleTab.type = 'button'; pasteTab.type = 'button';
+  var pasteWrap = el('div');
+  function paintModeTabs(){
+    singleTab.className = mode === 'single' ? '' : 'ghost';
+    pasteTab.className = mode === 'paste' ? '' : 'ghost';
+    pasteWrap.classList.toggle('hidden', mode !== 'paste');
+  }
+  singleTab.addEventListener('click', function(){ mode = 'single'; paintModeTabs(); });
+  pasteTab.addEventListener('click', function(){ mode = 'paste'; paintModeTabs(); });
+  modeBar.appendChild(singleTab);
+  modeBar.appendChild(pasteTab);
+  body.appendChild(modeBar);
 
   var host = el('div');
 
@@ -953,6 +985,7 @@ StepRenderers.menu = function(body, data){
       head.appendChild(caret);
       head.addEventListener('click', function(){ openCats[cat] = !isOpen; repaint(); });
       acc.appendChild(head);
+      acc.appendChild(menuPreviewTable_(list));
 
       var listHost = el('div');
       listHost.classList.toggle('hidden', !isOpen);
@@ -985,7 +1018,7 @@ StepRenderers.menu = function(body, data){
     host.appendChild(addBtn);
   }
 
-  body.appendChild(menuPastePanel_(function(parsedRows){
+  pasteWrap.appendChild(menuPastePanel_(function(parsedRows){
     syncFromDom_();
     parsedRows.forEach(function(p){
       items.push({
@@ -997,6 +1030,8 @@ StepRenderers.menu = function(body, data){
     repaint();
     touch();
   }));
+  body.appendChild(pasteWrap);
+  paintModeTabs();
 
   body.appendChild(host);
   repaint();
