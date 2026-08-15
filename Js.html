@@ -372,6 +372,337 @@ function field(label, type, cur, opt){
 
 
 // ══════════════════════════════════════════════════════
+// 영업시간
+//  표(월~공휴일 8행)는 StepCollectors.hours 가 {rows,tail} 로 묶어 보냅니다.
+//  "매일 같아요"가 켜져 있으면 공통 한 줄만 입력받아 월~일 7행에 그대로 복제합니다.
+// ══════════════════════════════════════════════════════
+var HOURS_DAYS = ['월요일','화요일','수요일','목요일','금요일','토요일','일요일'];
+var HOURS_HOLIDAY = '공휴일';
+var HOURS_DEFAULT_ROW = ['Y','10:00','21:00','','',''];
+
+function hoursRowsFromData(data){
+  var rows = (data && data.rows) || [];
+  var out = [];
+  for (var i=0;i<8;i++){
+    var r = rows[i];
+    out.push(r && r.length ? r.slice(0,6) : HOURS_DEFAULT_ROW.slice());
+  }
+  return out;
+}
+
+/** 월~일(공휴일 제외)이 전부 같은 값인지 — 최초 진입(전부 기본값)도 true로 잡힙니다. */
+function hoursIsUniform(rows){
+  for (var i=1;i<7;i++){
+    for (var j=0;j<6;j++){
+      if (rows[i][j] !== rows[0][j]) return false;
+    }
+  }
+  return true;
+}
+
+function hoursReadRow_(rowEl){
+  var vals = ['','','','','',''];
+  if (!rowEl) return vals;
+  rowEl.querySelectorAll('[data-hrs-field]').forEach(function(input){
+    vals[Number(input.dataset.hrsField)] = input.value;
+  });
+  return vals;
+}
+
+function hoursFieldTime_(values, idx, label){
+  var box = el('div');
+  box.appendChild(el('label', null, esc(label)));
+  var input = document.createElement('input');
+  input.type = 'time';
+  input.step = 600;                      // 10분 단위
+  input.value = values[idx] || '';
+  input.dataset.hrsField = idx;
+  box.appendChild(input);
+  return box;
+}
+
+function hoursFieldOpen_(values, idx){
+  var box = el('div');
+  box.appendChild(el('label', null, '영업 여부'));
+  var sel = document.createElement('select');
+  sel.dataset.hrsField = idx;
+  [['Y','영업'], ['N','휴무']].forEach(function(p){
+    var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
+    if ((values[idx] || 'Y') === p[0]) o.selected = true;
+    sel.appendChild(o);
+  });
+  box.appendChild(sel);
+  return box;
+}
+
+function hoursCopyAbove_(rowEl){
+  var day = Number(rowEl.dataset.hrsDay);
+  var prev = rowEl.parentElement.querySelector('[data-hrs-scope="day"][data-hrs-day="' + (day - 1) + '"]');
+  if (!prev) return;
+  prev.querySelectorAll('[data-hrs-field]').forEach(function(src){
+    var dst = rowEl.querySelector('[data-hrs-field="' + src.dataset.hrsField + '"]');
+    if (dst) dst.value = src.value;
+  });
+  touch();
+}
+
+/**
+ * @param {string} label 화면에 보일 이름
+ * @param {number|null} dayIndex 0~6=월~일(개별 모드), 7=공휴일, null=공통(매일 같아요 모드)
+ */
+function hoursDayRow_(label, values, dayIndex){
+  var wrap = el('div','hrs-row');
+  wrap.dataset.hrsScope = dayIndex === null ? 'shared' : (dayIndex === 7 ? 'holiday' : 'day');
+  if (dayIndex !== null) wrap.dataset.hrsDay = dayIndex;
+
+  var head = el('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
+  head.appendChild(el('strong', null, esc(label)));
+  if (dayIndex !== null && dayIndex >= 1 && dayIndex <= 6){
+    var copyBtn = el('button','ghost','위와 같음');
+    copyBtn.type = 'button';
+    copyBtn.style.cssText = 'width:auto;margin:0;padding:4px 10px;font-size:12px';
+    copyBtn.addEventListener('click', function(){ hoursCopyAbove_(wrap); });
+    head.appendChild(copyBtn);
+  }
+  wrap.appendChild(head);
+
+  var line1 = el('div','row');
+  line1.style.marginTop = '8px';
+  line1.appendChild(hoursFieldOpen_(values, 0));
+  line1.appendChild(hoursFieldTime_(values, 1, '오픈'));
+  line1.appendChild(hoursFieldTime_(values, 2, '문 닫는 시각'));
+  wrap.appendChild(line1);
+
+  var details = document.createElement('details');
+  var summary = document.createElement('summary');
+  summary.textContent = '브레이크타임 · 라스트오더';
+  details.appendChild(summary);
+  var line2 = el('div','row');
+  line2.style.marginTop = '8px';
+  line2.appendChild(hoursFieldTime_(values, 3, '브레이크 시작'));
+  line2.appendChild(hoursFieldTime_(values, 4, '브레이크 종료'));
+  line2.appendChild(hoursFieldTime_(values, 5, '라스트오더'));
+  details.appendChild(line2);
+  wrap.appendChild(details);
+
+  return wrap;
+}
+
+// ── 정기휴무 — 없음 / 매주 / 매월 특정 주차 / 격주 ──
+function hoursPaintChip_(chip){
+  var on = chip.classList.contains('on');
+  chip.style.background = on ? 'var(--navy)' : '#fff';
+  chip.style.color = on ? '#fff' : '#1A1D23';
+  chip.style.borderColor = on ? 'var(--navy)' : '#CDD3DC';
+}
+
+function hoursComposeRegularClosure_(){
+  var typeSel = $('hrsRegType');
+  if (!typeSel) return '';
+  var type = typeSel.value;
+  if (type === '없음') return '';
+
+  var days = Array.prototype.filter.call($('hrsRegDays').children, function(c){ return c.classList.contains('on'); })
+                   .map(function(c){ return c.dataset.day; });
+  if (!days.length) return '';
+
+  if (type === '매월 특정 주차'){
+    var weeks = Array.prototype.filter.call($('hrsRegWeeks').children, function(c){ return c.classList.contains('on'); })
+                     .map(function(c){ return c.dataset.week; });
+    if (!weeks.length) return '';
+    return '매월 ' + weeks.join('·') + ' ' + days[0] + '요일';
+  }
+  return type + ' ' + days.join('·') + '요일';
+}
+
+/** 저장된 문자열을 되읽어 타입·칩 상태로 복원합니다. 못 알아보는 옛 수기 입력은 "없음"으로 둡니다. */
+function hoursParseRegularClosure_(str, typeSel, dayChips, weekChips){
+  if (!str){ typeSel.value = '없음'; return; }
+
+  var m = str.match(/^매월\s+([가-힣·]+)\s+([월화수목금토일])요일$/);
+  if (m){
+    typeSel.value = '매월 특정 주차';
+    var weeks = m[1].split('·');
+    Array.prototype.forEach.call(weekChips.children, function(c){
+      if (weeks.indexOf(c.dataset.week) !== -1) c.classList.add('on');
+    });
+    Array.prototype.forEach.call(dayChips.children, function(c){
+      if (c.dataset.day === m[2]) c.classList.add('on');
+    });
+    return;
+  }
+  m = str.match(/^(매주|격주)\s+([가-힣·]+)요일$/);
+  if (m){
+    typeSel.value = m[1];
+    var days = m[2].split('·');
+    Array.prototype.forEach.call(dayChips.children, function(c){
+      if (days.indexOf(c.dataset.day) !== -1) c.classList.add('on');
+    });
+    return;
+  }
+  typeSel.value = '없음';
+}
+
+function hoursRegularClosureField_(initial){
+  var box = el('div');
+  box.appendChild(el('label', null, '정기 휴무'));
+
+  var typeSel = document.createElement('select');
+  typeSel.id = 'hrsRegType';
+  ['없음','매주','매월 특정 주차','격주'].forEach(function(t){
+    var o = document.createElement('option'); o.value = t; o.textContent = t; typeSel.appendChild(o);
+  });
+  box.appendChild(typeSel);
+
+  var dayChips = el('div'); dayChips.id = 'hrsRegDays';
+  dayChips.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin:10px 0';
+  ['월','화','수','목','금','토','일'].forEach(function(d){
+    var chip = el('button', null, d);
+    chip.type = 'button';
+    chip.dataset.day = d;
+    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid #CDD3DC;background:#fff;color:#1A1D23';
+    chip.addEventListener('click', function(){
+      if (typeSel.value === '매월 특정 주차'){
+        Array.prototype.forEach.call(dayChips.children, function(c){ c.classList.remove('on'); hoursPaintChip_(c); });
+      }
+      chip.classList.toggle('on');
+      hoursPaintChip_(chip);
+      updatePreview();
+      touch();
+    });
+    dayChips.appendChild(chip);
+  });
+  box.appendChild(dayChips);
+
+  var weekChips = el('div'); weekChips.id = 'hrsRegWeeks';
+  weekChips.style.cssText = 'display:none;flex-wrap:wrap;gap:6px;margin:0 0 10px';
+  ['첫째','둘째','셋째','넷째','다섯째'].forEach(function(w){
+    var chip = el('button', null, w);
+    chip.type = 'button';
+    chip.dataset.week = w;
+    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid #CDD3DC;background:#fff;color:#1A1D23';
+    chip.addEventListener('click', function(){
+      chip.classList.toggle('on');
+      hoursPaintChip_(chip);
+      updatePreview();
+      touch();
+    });
+    weekChips.appendChild(chip);
+  });
+  box.appendChild(weekChips);
+
+  var preview = el('p','hint');
+  box.appendChild(preview);
+
+  function updatePreview(){
+    var v = hoursComposeRegularClosure_();
+    preview.textContent = v ? ('저장될 값: ' + v) : '설정한 규칙이 없으면 빈 값으로 저장됩니다.';
+  }
+
+  hoursParseRegularClosure_(initial || '', typeSel, dayChips, weekChips);
+  Array.prototype.forEach.call(dayChips.children, hoursPaintChip_);
+  Array.prototype.forEach.call(weekChips.children, hoursPaintChip_);
+  weekChips.style.display = typeSel.value === '매월 특정 주차' ? 'flex' : 'none';
+  updatePreview();
+
+  typeSel.addEventListener('change', function(){
+    weekChips.style.display = typeSel.value === '매월 특정 주차' ? 'flex' : 'none';
+    updatePreview();
+    touch();
+  });
+
+  return box;
+}
+
+StepRenderers.hours = function(body, data){
+  body.appendChild(el('h2','page-h','영업시간'));
+  body.appendChild(el('p','page-sub','요일마다 다르지 않으면 "매일 같아요"를 켠 채로 한 번만 입력하세요. 공휴일은 따로 입력합니다.'));
+
+  var rows = hoursRowsFromData(data);
+  var same = hoursIsUniform(rows);
+
+  var card = el('div','card');
+  var toggleWrap = el('label', null, '');
+  toggleWrap.style.cssText = 'display:flex;align-items:center;gap:8px;margin:0 0 14px';
+  var toggleInput = document.createElement('input');
+  toggleInput.type = 'checkbox';
+  toggleInput.id = 'hrsSame';
+  toggleInput.checked = same;
+  toggleInput.style.cssText = 'width:18px;height:18px';
+  toggleWrap.appendChild(toggleInput);
+  toggleWrap.appendChild(document.createTextNode('매일 같아요'));
+  card.appendChild(toggleWrap);
+
+  var daysHost = el('div');
+  card.appendChild(daysHost);
+  body.appendChild(card);
+
+  function paintDays(){
+    daysHost.innerHTML = '';
+    if (toggleInput.checked){
+      daysHost.appendChild(hoursDayRow_('월~일 (매일)', rows[0], null));
+    } else {
+      HOURS_DAYS.forEach(function(label, i){ daysHost.appendChild(hoursDayRow_(label, rows[i], i)); });
+    }
+    daysHost.appendChild(hoursDayRow_(HOURS_HOLIDAY, rows[7], 7));
+  }
+
+  toggleInput.addEventListener('change', function(){
+    // 전환 전 화면에 있던 값을 rows 에 반영해 입력 중이던 값이 날아가지 않게 합니다.
+    if (toggleInput.checked){
+      for (var i = 0; i < 7; i++){
+        var rEl = daysHost.querySelector('[data-hrs-scope="day"][data-hrs-day="' + i + '"]');
+        if (rEl) rows[i] = hoursReadRow_(rEl);
+      }
+    } else {
+      var sEl = daysHost.querySelector('[data-hrs-scope="shared"]');
+      if (sEl){
+        var v = hoursReadRow_(sEl);
+        for (var j = 0; j < 7; j++) rows[j] = v.slice();
+      }
+    }
+    var hEl = daysHost.querySelector('[data-hrs-scope="holiday"]');
+    if (hEl) rows[7] = hoursReadRow_(hEl);
+    paintDays();
+    touch();
+  });
+  paintDays();
+
+  var tail = (data && data.tail) || {};
+  var tailCard = el('div','card');
+  tailCard.appendChild(el('h3', null, '추가 휴무 정보'));
+  tailCard.appendChild(hoursRegularClosureField_(tail['정기 휴무'] || ''));
+  tailCard.appendChild(field('명절 휴무', 'text', tail['명절 휴무'] || '', {hint:'예) 설·추석 당일 휴무'}));
+  tailCard.appendChild(field('연차·임시휴무 안내 방법', 'text', tail['연차·임시휴무 안내 방법'] || '', {hint:'예) 인스타그램 공지'}));
+  body.appendChild(tailCard);
+};
+
+StepCollectors.hours = function(out){
+  var rows = [];
+  if ($('hrsSame') && $('hrsSame').checked){
+    var shared = document.querySelector('[data-hrs-scope="shared"]');
+    var sharedVals = hoursReadRow_(shared);
+    for (var i = 0; i < 7; i++) rows.push(sharedVals.slice());
+  } else {
+    for (var d = 0; d < 7; d++){
+      rows.push(hoursReadRow_(document.querySelector('[data-hrs-scope="day"][data-hrs-day="' + d + '"]')));
+    }
+  }
+  rows.push(hoursReadRow_(document.querySelector('[data-hrs-scope="holiday"]')));
+
+  return {
+    rows: rows,
+    tail: {
+      '정기 휴무': hoursComposeRegularClosure_(),
+      '명절 휴무': out['명절 휴무'],
+      '연차·임시휴무 안내 방법': out['연차·임시휴무 안내 방법']
+    }
+  };
+};
+
+
+// ══════════════════════════════════════════════════════
 // 이미지 단계 — 실제 동작
 // ══════════════════════════════════════════════════════
 StepRenderers.image = function(body, data){
