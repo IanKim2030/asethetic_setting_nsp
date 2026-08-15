@@ -9,10 +9,10 @@
 const SESSION_SHEET_ID = '';
 
 /** 업체별로 복사할 마스터 세팅시트 ID. 비워두면 시트 생성 단계를 건너뜁니다. */
-const TEMPLATE_SHEET_ID = '';
+const TEMPLATE_SHEET_ID = '1jwfCjhKPa7svBWNM89EH49p2M05mPVsBjMjygMkaQqk';
 
 /** 제출·수정 알림을 받을 담당자 메일. 쉼표로 여러 명 가능. */
-const NOTIFY_EMAIL = '';
+const NOTIFY_EMAIL = 'aesthetic.kyunyong.kim@gmail.com';
 
 
 // ── 고정값 ──────────────────────────────────────────
