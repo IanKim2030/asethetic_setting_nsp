@@ -1,0 +1,634 @@
+<script>
+// ══════════════════════════════════════════════════════
+// 공통
+// ══════════════════════════════════════════════════════
+function $(id){ return document.getElementById(id); }
+function el(tag, cls, html){
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+function call(fn, arg){
+  return new Promise(function(res, rej){
+    google.script.run.withSuccessHandler(res).withFailureHandler(rej)[fn](arg);
+  });
+}
+function kb(b){ return Math.round(b/1024); }
+function fmtKB(v){ return v>=1024 ? (v/1024).toFixed(1)+' MB' : v+' KB'; }
+function fmtMs(ms){ return ms>=1000 ? (ms/1000).toFixed(1)+'초' : ms+'ms'; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/** 하단 알림. 모바일에서는 콘솔을 볼 수 없으므로 오류를 화면에 띄웁니다. */
+var _toastTimer = null;
+function toast(msg, ms){
+  var t = $('toast');
+  if (!t){
+    t = el('div','toast');
+    t.id = 'toast';
+    t.addEventListener('click', function(){ t.classList.remove('on'); });
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function(){ t.classList.remove('on'); }, ms || 9000);
+}
+
+// ── 앱 상태 ────────────────────────────────────────
+var APP = {
+  boot: null,        // 서버가 준 STEPS 등
+  session: null,
+  progress: null,
+  stepKey: null,
+  dirty: false,
+  saveTimer: null
+};
+
+/**
+ * 서버 응답을 못 받아도 화면이 비지 않도록 기본값을 먼저 박아둡니다.
+ * (앞서 카테고리 목록이 안 보이던 문제의 원인이 이것이었습니다)
+ */
+var FALLBACK_BOOT = {
+  steps: [
+    {key:'basic',   title:'기본정보',  required:true},
+    {key:'hours',   title:'영업시간',  required:true},
+    {key:'extra',   title:'부가정보',  required:false},
+    {key:'menu',    title:'시술메뉴',  required:true},
+    {key:'package', title:'패키지',    required:false},
+    {key:'product', title:'예약상품',  required:false},
+    {key:'booking', title:'예약설정',  required:false},
+    {key:'call',    title:'스마트콜',  required:false},
+    {key:'image',   title:'이미지',    required:true},
+    {key:'review',  title:'검토·제출', required:false}
+  ],
+  bookingSteps: ['product','booking'],
+  imageCategories: ['외관','내부','관리실','시술','제품','로고','예약메인','예약상품'],
+  maxUploadMB: 8
+};
+APP.boot = FALLBACK_BOOT;
+
+call('apiBootstrap').then(function(b){
+  if (b && b.steps && b.steps.length) APP.boot = b;
+}).catch(function(){ /* 폴백 유지 */ });
+
+
+// ══════════════════════════════════════════════════════
+// 진입
+// ══════════════════════════════════════════════════════
+$('gBtn').addEventListener('click', async function(){
+  var shopName = $('gShop').value.trim();
+  var ownerName = $('gOwner').value.trim();
+  var phone4 = $('gPhone4').value.trim();
+  $('gErr').textContent = '';
+
+  if (!shopName || !ownerName){ $('gErr').textContent = '상호명과 대표자명을 입력해 주세요.'; return; }
+  if (!/^\d{4}$/.test(phone4)){ $('gErr').textContent = '휴대폰 뒷 4자리를 숫자로 입력해 주세요.'; return; }
+
+  $('gBtn').disabled = true;
+  $('gBtn').textContent = '확인 중…';
+  try{
+    var r = await call('apiEnter', {shopName:shopName, ownerName:ownerName, phone4:phone4});
+    if (!r.ok) throw new Error(r.error);
+    APP.session = r.session;
+
+    if (r.isNew){
+      startApp(APP.session.currentStep || 'basic');
+    } else {
+      var doneCount = Object.keys(APP.session.done||{}).filter(function(k){ return APP.session.done[k]; }).length;
+      $('rInfo').textContent = doneCount + '개 단계까지 작성하셨습니다. (최종 수정 ' + (APP.session.updatedAt||'-') + ')';
+      show('resume');
+    }
+  }catch(e){
+    $('gErr').textContent = e.message || String(e);
+  }finally{
+    $('gBtn').disabled = false;
+    $('gBtn').textContent = '시작하기';
+  }
+});
+
+$('rContinue').addEventListener('click', function(){ startApp(APP.session.currentStep || 'basic'); });
+$('rRestart').addEventListener('click', function(){ startApp('basic'); });
+
+function show(id){
+  ['gate','resume','app'].forEach(function(k){ $(k).classList.toggle('hidden', k!==id); });
+}
+
+
+// ══════════════════════════════════════════════════════
+// 셸 — 스텝퍼 · 라우팅
+// ══════════════════════════════════════════════════════
+function activeSteps(){
+  var usesBooking = !(APP.session.data.booking && APP.session.data.booking.useOnlineBooking === 'N');
+  return APP.boot.steps.filter(function(s){
+    if (!usesBooking && APP.boot.bookingSteps.indexOf(s.key) !== -1) return false;
+    return true;
+  });
+}
+
+function startApp(stepKey){
+  show('app');
+  $('tShop').textContent = APP.session.shopName + ' · ' + APP.session.ownerName;
+  renderStepper();
+  goStep(stepKey);
+  window.addEventListener('hashchange', function(){
+    var k = location.hash.replace('#','');
+    if (k && k !== APP.stepKey) goStep(k);
+  });
+}
+
+function renderStepper(){
+  var wrap = $('stepper');
+  wrap.innerHTML = '';
+  activeSteps().forEach(function(s){
+    var d = el('div','st', esc(s.title));
+    d.dataset.key = s.key;
+    d.addEventListener('click', function(){ goStep(s.key); });
+    wrap.appendChild(d);
+  });
+  paintStepper();
+}
+
+function paintStepper(){
+  var list = activeSteps();
+  Array.prototype.forEach.call($('stepper').children, function(node){
+    var k = node.dataset.key;
+    node.classList.toggle('done', !!(APP.session.done && APP.session.done[k]));
+    node.classList.toggle('cur', k === APP.stepKey);
+  });
+  var idx = list.findIndex(function(s){ return s.key === APP.stepKey; });
+  var cur = list[idx] || list[0];
+  var pct = APP.progress ? APP.progress.percent : 0;
+  $('mFill').style.width = pct + '%';
+  $('mLabel').textContent = (idx+1) + ' / ' + list.length + '  ' + (cur?cur.title:'') + '   ·   ' + pct + '%';
+
+  $('btnPrev').disabled = idx <= 0;
+  $('btnNext').textContent = (idx === list.length-1) ? '검토 화면으로' : '다음';
+}
+
+async function goStep(key){
+  await flushSave();                       // 이동 전 강제 저장
+  APP.stepKey = key;
+  if (location.hash !== '#'+key) location.hash = key;
+
+  var r = await call('apiLoadStep', {id:APP.session.id, stepKey:key});
+  var data = (r && r.ok) ? r.stepData : {};
+  if (r && r.ok) APP.progress = r.progress;
+
+  // 서버가 준 값을 클라이언트 세션에도 반영합니다.
+  // 이걸 빠뜨리면 StepCollectors 가 진입 시점의 낡은 값을 되돌려 보내
+  // 그 사이 서버에 쌓인 내용(업로드된 사진 목록 등)을 덮어씁니다.
+  if (r && r.ok){
+    APP.session.data = APP.session.data || {};
+    APP.session.data[key] = data;
+  }
+
+  var body = $('stepBody');
+  body.innerHTML = '';
+  var renderer = StepRenderers[key] || StepRenderers.__placeholder;
+  renderer(body, data, {stepKey:key});
+  window.scrollTo(0,0);
+  paintStepper();
+}
+
+$('btnPrev').addEventListener('click', function(){
+  var list = activeSteps();
+  var i = list.findIndex(function(s){ return s.key===APP.stepKey; });
+  if (i > 0) goStep(list[i-1].key);
+});
+$('btnNext').addEventListener('click', async function(){
+  await markDone(true);
+  var list = activeSteps();
+  var i = list.findIndex(function(s){ return s.key===APP.stepKey; });
+  if (i < list.length-1) goStep(list[i+1].key);
+});
+
+
+// ══════════════════════════════════════════════════════
+// 자동저장
+//  3초는 너무 잦습니다. 콜드 스타트가 1~3초라 저장이 계속 밀립니다.
+//  10초 디바운스 + 단계 이동 시 강제 저장으로 갑니다.
+// ══════════════════════════════════════════════════════
+var SAVE_DEBOUNCE_MS = 10000;
+
+function collectStepData(){
+  var out = {};
+  document.querySelectorAll('#stepBody [data-f]').forEach(function(n){
+    var key = n.dataset.f;
+    var v = (n.type === 'checkbox') ? (n.checked ? 'Y' : 'N') : n.value;
+    var stEl = document.querySelector('#stepBody [data-st="'+key+'"]');
+    out[key] = stEl ? {v:v, st:stEl.value, __status:stEl.value, __label:key} : v;
+  });
+  var custom = StepCollectors[APP.stepKey];
+  if (custom) out = custom(out);
+  return out;
+}
+
+function touch(){
+  APP.dirty = true;
+  $('tSave').textContent = '입력 중…';
+  clearTimeout(APP.saveTimer);
+  APP.saveTimer = setTimeout(function(){ doSave(false); }, SAVE_DEBOUNCE_MS);
+}
+
+async function doSave(done){
+  if (!APP.session || !APP.stepKey) return;
+  clearTimeout(APP.saveTimer);
+  $('tSave').textContent = '저장 중…';
+  try{
+    var r = await call('apiSave', {
+      id: APP.session.id, stepKey: APP.stepKey,
+      stepData: collectStepData(),
+      done: (done === undefined ? undefined : done)
+    });
+    if (r && r.ok){
+      APP.dirty = false;
+      APP.progress = r.progress;
+      if (done === true) APP.session.done[APP.stepKey] = true;
+      $('tSave').textContent = '저장됨';
+      paintStepper();
+    } else {
+      saveFailed_((r && r.error) || '알 수 없는 오류입니다.');
+    }
+  }catch(e){
+    saveFailed_(e && e.message ? e.message : String(e));
+  }
+}
+
+/**
+ * 저장 실패를 눈에 보이게 알립니다.
+ * "저장 실패" 네 글자만 띄우고 원인을 버리면 사장님도 담당자도 손쓸 수가 없습니다.
+ */
+function saveFailed_(msg){
+  $('tSave').textContent = '저장 실패';
+  $('tSave').title = msg;
+  if (window.console && console.error) console.error('[저장 실패] ' + msg);
+  toast('저장하지 못했습니다 — ' + msg);
+}
+
+function flushSave(){ return APP.dirty ? doSave(undefined) : Promise.resolve(); }
+function markDone(v){ return doSave(v); }
+
+document.addEventListener('input', function(e){
+  if (e.target.closest && e.target.closest('#stepBody')) touch();
+});
+document.addEventListener('change', function(e){
+  if (e.target.closest && e.target.closest('#stepBody')) touch();
+});
+window.addEventListener('beforeunload', function(e){
+  if (APP.dirty){ e.preventDefault(); e.returnValue = ''; }
+});
+
+
+// ══════════════════════════════════════════════════════
+// 단계 렌더러
+//  각 단계 화면은 여기에 하나씩 채워 넣습니다.
+//  지금은 자리만 잡혀 있고, 이미지·검토만 실제로 동작합니다.
+// ══════════════════════════════════════════════════════
+var StepRenderers = {};
+var StepCollectors = {};
+
+/** 아직 안 만든 단계 */
+StepRenderers.__placeholder = function(body, data, ctx){
+  var step = APP.boot.steps.filter(function(s){ return s.key===ctx.stepKey; })[0] || {title:ctx.stepKey};
+  body.appendChild(el('h2','page-h', esc(step.title)));
+  body.appendChild(el('p','page-sub', step.required ? '필수 단계입니다.' : '선택 단계입니다.'));
+  body.appendChild(el('div','placeholder',
+    '<b>' + esc(step.title) + '</b> 화면은 아직 만들지 않았습니다.<br>' +
+    '<span style="font-size:12px">Js.html 의 <code>StepRenderers.' + esc(ctx.stepKey) + '</code> 에 채우세요.</span>'));
+};
+
+/** 예시 — 기본정보 일부만 넣어 두었습니다. 나머지 필드는 같은 방식으로 늘리면 됩니다. */
+StepRenderers.basic = function(body, data){
+  body.appendChild(el('h2','page-h','기본정보'));
+  body.appendChild(el('p','page-sub','노란 칸에 입력해 주세요. 모르는 항목은 상태를 “상담필요”로 두시면 담당자가 함께 정해드립니다.'));
+
+  var c1 = el('div','card');
+  c1.appendChild(el('h3', null, '업체 정보'));
+  c1.appendChild(field('상호명', 'text', data['상호명'], {
+    required:true, hint:'지역명·홍보문구는 네이버 심사에서 반려됩니다. ❌ 강남 최고 피부관리 OO샵 → ✅ OO샵', max:30
+  }));
+  c1.appendChild(field('지점명', 'text', data['지점명'], {hint:'지점이 여러 개일 때만'}));
+  body.appendChild(c1);
+
+  var c2 = el('div','card');
+  c2.appendChild(el('h3', null, '위치'));
+  c2.appendChild(field('주소(도로명)', 'text', data['주소(도로명)'], {required:true, hint:'우편번호 검색 API 연결 예정'}));
+  c2.appendChild(field('상세주소(층/호)', 'text', data['상세주소(층/호)'], {required:true, hint:'상가 입점이 대부분이라 층수가 중요합니다'}));
+  c2.appendChild(field('찾아오는 길', 'text', data['찾아오는 길'], {hint:'간판이 작거나 없으면 꼭 적어주세요'}));
+  body.appendChild(c2);
+
+  var c3 = el('div','card');
+  c3.appendChild(el('h3', null, '연락처'));
+  c3.appendChild(field('대표 전화', 'tel', data['대표 전화'], {
+    required:true, hint:'스마트콜 0507 번호로 걸려온 전화가 이 번호로 연결됩니다 (1차 착신)'
+  }));
+  body.appendChild(c3);
+
+  body.appendChild(el('div','placeholder',
+    '홍보 · 소개·키워드 · 사업자 정보 항목은 아직 넣지 않았습니다.<br>' +
+    '<span style="font-size:12px">위 <code>field()</code> 호출을 늘려서 채우세요.</span>'));
+};
+
+/** 입력 한 줄 만들기 — 값 + 상태(입력완료/미입력/상담필요) */
+function field(label, type, cur, opt){
+  opt = opt || {};
+  var v = (cur && typeof cur === 'object') ? cur.v : (cur || '');
+  var st = (cur && typeof cur === 'object') ? cur.st : '';
+
+  var box = el('div');
+  var lab = el('label', null, esc(label) + (opt.required ? ' <span style="color:#C0392B">*</span>' : ''));
+  box.appendChild(lab);
+
+  var input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
+  if (type !== 'textarea') input.type = type;
+  input.dataset.f = label;
+  input.value = v;
+  if (opt.max) input.maxLength = opt.max;
+  box.appendChild(input);
+
+  if (opt.max){
+    var cnt = el('p','hint');
+    var upd = function(){ cnt.textContent = '입력 ' + input.value.length + ' / ' + opt.max + '자'; };
+    input.addEventListener('input', upd); upd();
+    box.appendChild(cnt);
+  }
+  if (opt.hint) box.appendChild(el('p','hint', esc(opt.hint)));
+
+  var sel = document.createElement('select');
+  sel.dataset.st = label;
+  ['', '입력완료', '미입력', '상담필요'].forEach(function(o){
+    var op = document.createElement('option');
+    op.value = o; op.textContent = o || '상태 선택';
+    if (o === st) op.selected = true;
+    sel.appendChild(op);
+  });
+  sel.style.marginTop = '6px';
+  box.appendChild(sel);
+  box.appendChild(el('div', null, '<div style="height:14px"></div>'));
+  return box;
+}
+
+
+// ══════════════════════════════════════════════════════
+// 이미지 단계 — 실제 동작
+// ══════════════════════════════════════════════════════
+StepRenderers.image = function(body, data){
+  body.appendChild(el('h2','page-h','이미지'));
+  body.appendChild(el('p','page-sub','사진은 자동으로 크기를 줄여 올립니다. 한 장씩 순서대로 처리되니 완료될 때까지 화면을 켜 두세요.'));
+
+  var card = el('div','card');
+  card.innerHTML =
+    '<h3>사진 올리기</h3>' +
+    '<div class="row">' +
+      '<div><label>용도</label><select id="upCat"></select></div>' +
+      '<div><label>최대 변 길이</label><select id="upEdge">' +
+        '<option value="1280">1280 px</option>' +
+        '<option value="2048" selected>2048 px</option>' +
+        '<option value="3200">3200 px</option>' +
+      '</select></div>' +
+    '</div>' +
+    '<div style="height:12px"></div>' +
+    '<div class="drop" id="upDrop">탭해서 사진을 고르세요<br>' +
+      '<span style="font-size:12px">PC에서는 끌어다 놓아도 됩니다</span></div>' +
+    '<input type="file" id="upPick" accept="image/*" multiple>' +
+    '<div class="bar"><i id="upFill"></i></div>' +
+    '<div class="meta" id="upText">대기 중</div>' +
+    '<ul class="log" id="upLog"></ul>';
+  body.appendChild(card);
+
+  // 목록을 먼저 폴백으로 채우고, 서버 값이 있으면 덮어씁니다
+  var sel = $('upCat');
+  (APP.boot.imageCategories || FALLBACK_BOOT.imageCategories).forEach(function(c){
+    var o = document.createElement('option'); o.value = c; o.textContent = c; sel.appendChild(o);
+  });
+
+  var listCard = el('div','card');
+  listCard.innerHTML = '<h3>올린 사진</h3><ul class="log" id="upList"></ul>';
+  body.appendChild(listCard);
+  paintUploaded((data && data.items) || []);
+
+  var files = [];
+  $('upDrop').addEventListener('click', function(){ $('upPick').click(); });
+  ['dragenter','dragover'].forEach(function(ev){
+    $('upDrop').addEventListener(ev, function(e){ e.preventDefault(); $('upDrop').classList.add('on'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    $('upDrop').addEventListener(ev, function(e){ e.preventDefault(); $('upDrop').classList.remove('on'); });
+  });
+  $('upDrop').addEventListener('drop', function(e){ setFiles(Array.prototype.slice.call(e.dataTransfer.files)); });
+  $('upPick').addEventListener('change', function(e){ setFiles(Array.prototype.slice.call(e.target.files)); });
+
+  function setFiles(list){
+    files = list.filter(function(f){ return /^image\//.test(f.type); });
+    var total = files.reduce(function(a,f){ return a+f.size; }, 0);
+    $('upDrop').innerHTML = files.length
+      ? '<b>' + files.length + '장</b> 선택됨 · 원본 ' + fmtKB(kb(total)) +
+        '<br><span style="font-size:12px">아래 버튼으로 업로드를 시작하세요</span>'
+      : '탭해서 사진을 고르세요';
+    if (files.length && !$('upGo')){
+      var go = el('button', null, '업로드 시작'); go.id = 'upGo';
+      go.addEventListener('click', run);
+      card.appendChild(go);
+    }
+  }
+
+  async function run(){
+    $('upGo').disabled = true;
+    $('upLog').innerHTML = '';
+    var cat = $('upCat').value, maxEdge = parseInt($('upEdge').value,10);
+    var t0 = Date.now(), ok = 0;
+
+    for (var i=0;i<files.length;i++){
+      var f = files[i];
+      var li = el('li','');
+      li.innerHTML = '<span class="name">'+esc(f.name)+'</span><span class="meta"></span><span class="st-run">진행</span>';
+      $('upLog').appendChild(li);
+      var meta = li.querySelector('.meta'), stx = li.querySelector('span:last-child');
+      $('upFill').style.width = Math.round(i/files.length*100)+'%';
+      $('upText').textContent = (i+1)+' / '+files.length+' 처리 중';
+
+      try{
+        var r0 = Date.now();
+        var out = await resizeToJpeg(f, maxEdge, 0.82);
+        var rms = Date.now()-r0;
+        var b64 = await blobToBase64(out.blob);
+        var u0 = Date.now();
+        var res = await call('apiUploadImage', {
+          id: APP.session.id, category: cat, mimeType:'image/jpeg',
+          dataBase64: b64, originalKB: kb(f.size)
+        });
+        var ums = Date.now()-u0;
+        if (res && res.ok){
+          ok++;
+          meta.textContent = fmtKB(kb(f.size))+' → '+fmtKB(res.savedKB)+' · 변환 '+fmtMs(rms)+' · 전송 '+fmtMs(ums);
+          stx.className='st-ok'; stx.textContent = res.fileName;
+        } else {
+          stx.className='st-err'; stx.textContent='실패'; meta.textContent = (res&&res.error)||'오류';
+        }
+      }catch(e){
+        stx.className='st-err'; stx.textContent='실패'; meta.textContent = e.message||String(e);
+      }
+    }
+    $('upFill').style.width='100%';
+    var total = Date.now()-t0;
+    $('upText').textContent = '완료 · ' + ok + '/' + files.length + ' · 총 ' + fmtMs(total) +
+      (ok ? '  (120장 환산 약 ' + Math.round(total/ok*120/1000/60*10)/10 + '분)' : '');
+    $('upGo').disabled = false;
+
+    // 업로드는 서버 세션에 직접 쌓이므로, 최신 목록을 받아 클라이언트에도 반영합니다.
+    var lr = await call('apiLoadStep', {id:APP.session.id, stepKey:'image'});
+    if (lr && lr.ok){
+      APP.session.data = APP.session.data || {};
+      APP.session.data.image = lr.stepData || {items:[]};
+      paintUploaded((lr.stepData && lr.stepData.items) || []);
+    }
+  }
+};
+
+function paintUploaded(items){
+  var ul = $('upList'); if (!ul) return;
+  ul.innerHTML = '';
+  if (!items.length){ ul.appendChild(el('li','', '<span class="meta">아직 올린 사진이 없습니다.</span>')); return; }
+  items.forEach(function(it){
+    var li = el('li','');
+    li.innerHTML = '<span class="name">'+esc(it.fileName)+'</span>' +
+                   '<span class="meta">'+esc(it.category)+' · '+fmtKB(it.sizeKB)+'</span>' +
+                   (it.isMain ? '<span class="badge b-ok">대표</span>' : '');
+    ul.appendChild(li);
+  });
+}
+
+/**
+ * 이미지 단계는 파일 목록의 주인이 서버입니다.
+ * 클라이언트가 보낼 게 없으므로 null 을 돌려 "이 단계 데이터는 손대지 말라"고 알립니다.
+ * 빈 객체를 보내면 업로드 중 자동저장이 끼어들 때 목록이 통째로 지워집니다.
+ */
+StepCollectors.image = function(){ return null; };
+
+
+// ── 리사이즈 ────────────────────────────────────────
+async function loadBitmap(file){
+  try{
+    return await createImageBitmap(file, {imageOrientation:'from-image'});   // EXIF 회전 반영
+  }catch(e){
+    return await new Promise(function(res, rej){
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function(){ URL.revokeObjectURL(url); res(img); };
+      img.onerror = function(err){ URL.revokeObjectURL(url); rej(err); };
+      img.src = url;
+    });
+  }
+}
+async function resizeToJpeg(file, maxEdge, quality){
+  if (!maxEdge) return {blob:file};
+  var src = await loadBitmap(file);
+  var w = src.width, h = src.height;
+  var scale = Math.min(1, maxEdge/Math.max(w,h));
+  w = Math.max(1, Math.round(w*scale));
+  h = Math.max(1, Math.round(h*scale));
+  var cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  cv.getContext('2d').drawImage(src, 0, 0, w, h);
+  if (src.close) src.close();
+  var blob = await new Promise(function(res){ cv.toBlob(res, 'image/jpeg', quality); });
+  cv.width = cv.height = 0;                   // 모바일 메모리 해제
+  return {blob:blob, w:w, h:h};
+}
+function blobToBase64(blob){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onload = function(){ res(String(fr.result).split(',')[1]); };
+    fr.onerror = rej;
+    fr.readAsDataURL(blob);
+  });
+}
+
+
+// ══════════════════════════════════════════════════════
+// 검토 · 제출
+// ══════════════════════════════════════════════════════
+StepRenderers.review = function(body){
+  body.appendChild(el('h2','page-h','검토 및 제출'));
+  var host = el('div'); body.appendChild(host);
+  host.innerHTML = '<div class="card"><span class="meta">불러오는 중…</span></div>';
+
+  call('apiReview', {id:APP.session.id}).then(function(r){
+    if (!r || !r.ok){ host.innerHTML = '<div class="card err">'+esc((r&&r.error)||'오류')+'</div>'; return; }
+    APP.progress = r.progress;
+    host.innerHTML = '';
+
+    var head = el('div','card');
+    head.innerHTML =
+      '<h3>진행 상황</h3>' +
+      '<div class="bar"><i style="width:'+r.progress.percent+'%"></i></div>' +
+      '<p class="hint">' + r.progress.doneCount + ' / ' + r.progress.totalCount + ' 단계 완료 · ' +
+      r.progress.percent + '%</p>' +
+      (r.progress.canSubmit
+        ? '<p><span class="badge b-ok">제출 가능</span> 필수 항목이 모두 채워졌습니다.</p>'
+        : '<p><span class="badge b-err">필수 미완료</span> ' + esc(r.progress.missingRequired.join(' · ')) + '</p>');
+    host.appendChild(head);
+
+    var stepCard = el('div','card');
+    stepCard.appendChild(el('h3', null, '단계별 점검'));
+    var ul = el('ul','rev');
+    activeSteps().forEach(function(s){
+      if (s.key === 'review') return;
+      var done = !!(APP.session.done && APP.session.done[s.key]);
+      var li = el('li','');
+      li.innerHTML = '<span class="badge ' + (done?'b-ok':(s.required?'b-err':'b-warn')) + '">' +
+                     (done?'완료':(s.required?'필수':'선택')) + '</span>' +
+                     '<span class="t">' + esc(s.title) + '</span>' +
+                     '<span class="go">이동</span>';
+      li.querySelector('.go').addEventListener('click', function(){ goStep(s.key); });
+      ul.appendChild(li);
+    });
+    stepCard.appendChild(ul);
+    host.appendChild(stepCard);
+
+    var asks = r.issues.filter(function(i){ return i.level==='ask'; });
+    var warns = r.issues.filter(function(i){ return i.level==='warn'; });
+
+    if (asks.length){
+      var a = el('div','card');
+      a.innerHTML = '<h3>확인이 필요한 항목</h3>';
+      var au = el('ul','rev');
+      asks.forEach(function(i){
+        au.appendChild(el('li','', '<span class="badge b-ask">상담</span><span class="t">'+esc(i.msg)+'</span>'));
+      });
+      a.appendChild(au);
+      a.appendChild(el('p','hint','담당자가 연락드려 함께 정해드립니다. 이대로 제출하셔도 됩니다.'));
+      host.appendChild(a);
+    }
+    if (warns.length){
+      var w = el('div','card');
+      w.innerHTML = '<h3>주의</h3>';
+      var wu = el('ul','rev');
+      warns.forEach(function(i){
+        wu.appendChild(el('li','', '<span class="badge b-warn">주의</span><span class="t">'+esc(i.msg)+'</span>'));
+      });
+      w.appendChild(wu);
+      host.appendChild(w);
+    }
+
+    var btn = el('button', null, '제출하기');
+    btn.disabled = !r.progress.canSubmit;
+    btn.addEventListener('click', async function(){
+      btn.disabled = true; btn.textContent = '제출 중…';
+      var sr = await call('apiSubmit', {id:APP.session.id});
+      if (sr && sr.ok){
+        host.innerHTML = '<div class="card center">' +
+          '<h3>제출이 완료되었습니다</h3>' +
+          '<p class="hint">담당자가 확인 후 연락드립니다.<br>' +
+          '같은 정보로 다시 들어오시면 언제든 수정하실 수 있습니다.</p>' +
+          '<p class="hint">제출 버전 v' + sr.version + (sr.changes ? ' · 변경 ' + sr.changes + '건' : '') + '</p></div>';
+      } else {
+        btn.disabled = false; btn.textContent = '제출하기';
+        alert((sr && sr.error) || '제출에 실패했습니다.');
+      }
+    });
+    host.appendChild(btn);
+  });
+};
+</script>

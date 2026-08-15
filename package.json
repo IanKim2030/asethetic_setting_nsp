@@ -1,0 +1,15 @@
+{
+  "name": "naver-smartplace-form",
+  "private": true,
+  "version": "0.0.0",
+  "description": "네이버 스마트플레이스 세팅 정보 수집 폼 (Google Apps Script)",
+  "scripts": {
+    "check": "node tools/check.js",
+    "dupcheck": "node tools/dupcheck.js .",
+    "test": "node test_sheetsync.js 03_SheetSync.gs",
+    "verify": "npm run check && npm run dupcheck && npm test"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  }
+}

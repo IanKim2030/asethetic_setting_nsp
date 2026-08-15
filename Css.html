@@ -1,0 +1,129 @@
+<style>
+:root{
+  --navy:#1F3864; --line:#E2E5EA; --muted:#7B8496; --bg:#F7F8FA;
+  --ok:#1B7F4B; --err:#C0392B; --warn:#B7791F; --ask:#2B6CB0;
+  --yellow:#FFF7E0;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:"Malgun Gothic","맑은 고딕",-apple-system,BlinkMacSystemFont,sans-serif;
+  font-size:15px;line-height:1.55;color:#1A1D23;background:var(--bg);
+}
+.hidden{display:none !important}
+.inner{max-width:600px;margin:0 auto;padding:0 16px}
+.center{text-align:center}
+
+/* ── 진입 ─────────────────────────── */
+.screen{min-height:100vh}
+#gate,#resume{display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.gate-box{width:100%;max-width:380px;background:#fff;border:1px solid var(--line);
+  border-radius:14px;padding:28px 22px}
+.gate-box h1{font-size:21px;line-height:1.35;margin:0 0 6px;color:var(--navy)}
+.gate-box .sub{font-size:13px;color:var(--muted);margin:0 0 22px}
+label{display:block;font-size:13px;font-weight:700;margin:14px 0 6px}
+input[type=text],input[type=tel],input[type=number],select,textarea{
+  width:100%;padding:12px;font-size:16px;font-family:inherit;
+  border:1px solid #CDD3DC;border-radius:8px;background:#fff;
+}
+input:focus,select:focus,textarea:focus{outline:2px solid #C9D6EF;border-color:var(--navy)}
+textarea{min-height:110px;resize:vertical;line-height:1.6}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+.err{font-size:13px;color:var(--err);margin:12px 0 0;min-height:18px}
+
+button{
+  width:100%;margin-top:16px;padding:14px;font-size:15px;font-weight:700;
+  border:0;border-radius:8px;background:var(--navy);color:#fff;
+  font-family:inherit;cursor:pointer;
+}
+button:disabled{background:#B4BCC9;cursor:default}
+button.ghost{background:#fff;color:var(--navy);border:1px solid #C3CAD6;font-weight:600}
+
+/* ── 상단 ─────────────────────────── */
+.topbar{position:sticky;top:0;z-index:20;background:#fff;border-bottom:1px solid var(--line)}
+.topbar .inner{display:flex;align-items:center;justify-content:space-between;height:46px}
+.shop{font-weight:700;font-size:14px;color:var(--navy);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.saveState{font-size:12px;color:var(--muted);white-space:nowrap;margin-left:10px}
+
+.mprog{padding:0 16px 10px}
+.mbar{height:4px;background:#E6E9EE;border-radius:2px;overflow:hidden}
+.mbar>i{display:block;height:100%;width:0;background:var(--navy);transition:width .25s}
+.mlabel{font-size:12px;color:var(--muted);margin-top:5px}
+
+.stepper{display:none}
+@media(min-width:760px){
+  .mprog{display:none}
+  .stepper{display:flex;gap:4px;max-width:900px;margin:0 auto;padding:0 16px 12px;overflow:hidden}
+  .stepper .st{flex:1;min-width:0;text-align:center;font-size:12px;color:var(--muted);
+    padding:8px 2px;border-top:3px solid #E1E5EC;cursor:pointer;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stepper .st.done{color:var(--ok);border-top-color:var(--ok)}
+  .stepper .st.cur{color:var(--navy);font-weight:700;border-top-color:var(--navy)}
+  .inner{max-width:720px}
+}
+
+/* ── 본문 ─────────────────────────── */
+main.inner{padding-top:18px;padding-bottom:110px}
+.page-h{font-size:19px;color:var(--navy);margin:0 0 4px}
+.page-sub{font-size:13px;color:var(--muted);margin:0 0 18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+.card > h3{font-size:14px;margin:0 0 12px;color:var(--navy)}
+.row{display:flex;gap:10px}
+.row > *{flex:1;min-width:0}
+.readonly{background:#F1F3F6;color:#5A6474}
+
+.placeholder{border:2px dashed #C8CFDA;border-radius:10px;padding:34px 18px;
+  text-align:center;color:var(--muted);font-size:14px;background:#FCFDFE}
+.placeholder b{color:var(--navy)}
+
+/* 상태 뱃지 */
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:10px}
+.b-ok{background:#E6F4EC;color:var(--ok)}
+.b-warn{background:#FDF3E2;color:var(--warn)}
+.b-ask{background:#E8F1FB;color:var(--ask)}
+.b-err{background:#FBEAE8;color:var(--err)}
+
+/* 업로드 */
+.drop{border:2px dashed #C3CAD6;border-radius:10px;padding:26px 16px;text-align:center;
+  color:var(--muted);font-size:14px;background:#FCFDFE;cursor:pointer}
+.drop.on{border-color:var(--navy);background:#EEF2FA;color:var(--navy)}
+input[type=file]{display:none}
+.bar{height:6px;background:#E6E9EE;border-radius:3px;overflow:hidden;margin:12px 0 6px}
+.bar>i{display:block;height:100%;width:0;background:var(--navy);transition:width .2s}
+ul.log{list-style:none;margin:10px 0 0;padding:0;font-size:13px}
+ul.log li{padding:8px 0;border-top:1px solid var(--line);display:flex;gap:8px;align-items:baseline}
+ul.log li:first-child{border-top:0}
+.name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta{color:var(--muted);font-size:12px;white-space:nowrap}
+.st-ok{color:var(--ok);font-weight:700}
+.st-err{color:var(--err);font-weight:700}
+.st-run{color:var(--navy)}
+
+/* 검토 */
+.rev{list-style:none;margin:0;padding:0;font-size:14px}
+.rev li{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.rev li:first-child{border-top:0}
+.rev .t{flex:1}
+.rev .go{font-size:12px;color:var(--navy);cursor:pointer;text-decoration:underline;white-space:nowrap}
+
+/* 하단 알림 — 오류를 화면에 띄웁니다 (모바일은 콘솔을 못 봅니다) */
+.toast{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(78px + env(safe-area-inset-bottom));
+  max-width:min(92vw,560px);z-index:60;
+  background:#2A2F3A;color:#fff;font-size:13px;line-height:1.55;
+  padding:12px 14px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.28);
+  opacity:0;pointer-events:none;transition:opacity .18s;
+  word-break:break-word;cursor:pointer;
+}
+.toast.on{opacity:1;pointer-events:auto}
+
+/* ── 하단 고정 ────────────────────── */
+.foot{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#fff;
+  border-top:1px solid var(--line);padding:10px 0;
+  padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+.foot .row{gap:10px}
+.foot button{margin-top:0}
+.foot .ghost{flex:0 0 34%}
+</style>
