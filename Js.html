@@ -337,7 +337,7 @@ function field(label, type, cur, opt){
   var v = (cur && typeof cur === 'object') ? cur.v : (cur || '');
 
   var box = el('div');
-  var lab = el('label', null, esc(label) + (opt.required ? ' <span style="color:#C0392B">*</span>' : ''));
+  var lab = el('label', null, esc(label) + (opt.required ? ' <span style="color:var(--err)">*</span>' : ''));
   box.appendChild(lab);
 
   var input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
@@ -481,9 +481,9 @@ function hoursDayRow_(label, values, dayIndex){
 // ── 정기휴무 — 없음 / 매주 / 매월 특정 주차 / 격주 ──
 function hoursPaintChip_(chip){
   var on = chip.classList.contains('on');
-  chip.style.background = on ? 'var(--navy)' : '#fff';
-  chip.style.color = on ? '#fff' : '#1A1D23';
-  chip.style.borderColor = on ? 'var(--navy)' : '#CDD3DC';
+  chip.style.background = on ? 'var(--accent)' : 'var(--surface)';
+  chip.style.color = on ? '#fff' : 'var(--ink)';
+  chip.style.borderColor = on ? 'var(--accent)' : 'var(--line)';
 }
 
 function hoursComposeRegularClosure_(){
@@ -550,7 +550,7 @@ function hoursRegularClosureField_(initial){
     var chip = el('button', null, d);
     chip.type = 'button';
     chip.dataset.day = d;
-    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid #CDD3DC;background:#fff;color:#1A1D23';
+    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink)';
     chip.addEventListener('click', function(){
       if (typeSel.value === '매월 특정 주차'){
         Array.prototype.forEach.call(dayChips.children, function(c){ c.classList.remove('on'); hoursPaintChip_(c); });
@@ -570,7 +570,7 @@ function hoursRegularClosureField_(initial){
     var chip = el('button', null, w);
     chip.type = 'button';
     chip.dataset.week = w;
-    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid #CDD3DC;background:#fff;color:#1A1D23';
+    chip.style.cssText = 'width:auto;margin:0;padding:6px 12px;font-size:13px;font-weight:600;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--ink)';
     chip.addEventListener('click', function(){
       chip.classList.toggle('on');
       hoursPaintChip_(chip);
