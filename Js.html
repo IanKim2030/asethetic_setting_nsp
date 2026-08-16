@@ -1413,6 +1413,152 @@ StepCollectors['package'] = function(){
 
 
 // ══════════════════════════════════════════════════════
+// 예약설정 — 07_예약설정 (vertical, B열 항목명 매칭)
+//  이 탭은 모든 항목명이 서로 겹치지 않아 field()/selectField_() 의 일반 수집만으로 충분합니다.
+//  (StepCollectors.booking 이 따로 없는 이유 — collectStepData 의 기본 동작을 그대로 씁니다)
+// ══════════════════════════════════════════════════════
+function selectField_(label, options, cur, opt){
+  opt = opt || {};
+  var v = (cur && typeof cur === 'object') ? cur.v : (cur || '');
+  var box = el('div');
+  box.appendChild(el('label', null, esc(label) + (opt.required ? ' <span style="color:var(--err)">*</span>' : '')));
+  var sel = document.createElement('select');
+  sel.dataset.f = label;
+  options.forEach(function(o){
+    var op = document.createElement('option'); op.value = o; op.textContent = o;
+    if (o === v) op.selected = true;
+    sel.appendChild(op);
+  });
+  box.appendChild(sel);
+  if (opt.hint) box.appendChild(el('p','hint', esc(opt.hint)));
+  box.appendChild(el('div', null, '<div style="height:14px"></div>'));
+  return box;
+}
+
+var BOOKING_TIME_OPTS = ['오전 9시','오전 10시','오전 11시','오후 12시','오후 1시','오후 2시','오후 3시',
+  '오후 4시','오후 5시','오후 6시','오후 7시','오후 8시','시술 2시간 전','시술 3시간 전'];
+var BOOKING_REMIND_OPTS = ['당일','1일 전','2일 전','3일 전','4일 전','미발송'];
+var BOOKING_INFO_OPTS = ['필수','선택','미사용'];
+
+StepRenderers.booking = function(body, data){
+  body.appendChild(el('h2','page-h','예약설정'));
+  body.appendChild(el('p','page-sub',
+    '기본값을 미리 채워뒀습니다. 온라인 예약을 받지 않으시면 첫 항목만 N으로 두시면 됩니다.'));
+
+  // ── 운영 설정 ──
+  var opCard = el('div','card');
+  opCard.appendChild(el('h3', null, '운영 설정'));
+  var opUseBox = selectField_('온라인 예약 사용', ['Y','N'], data['온라인 예약 사용'] || 'Y',
+    { required: true, hint: 'N 이면 아래 항목은 비워두셔도 됩니다' });
+  opCard.appendChild(opUseBox);
+  var opRest = el('div');
+  opRest.appendChild(field('예약 가능 시작', 'text', data['예약 가능 시작'], { hint: '예) 당일부터 / 익일부터 / 2일 후부터' }));
+  opRest.appendChild(field('예약 가능 종료', 'text', data['예약 가능 종료'], { hint: '예) 30일 후까지' }));
+  opRest.appendChild(field('예약 마감 시점', 'text', data['예약 마감 시점'], { hint: '예) 시작 2시간 전' }));
+  opRest.appendChild(field('취소 가능 시점', 'text', data['취소 가능 시점'], { hint: '예) 시작 24시간 전' }));
+  opRest.appendChild(selectField_('예약 시간 단위', ['30분','60분'], data['예약 시간 단위'], {}));
+  opRest.appendChild(field('동시 예약 가능 건수', 'number', data['동시 예약 가능 건수'], { hint: '관리사 인원 기준' }));
+  opRest.appendChild(field('노쇼 정책', 'text', data['노쇼 정책'], { hint: '예약금을 받는 경우 꼭 정해주세요' }));
+  opCard.appendChild(opRest);
+  body.appendChild(opCard);
+
+  function syncOpVisibility(){ opRest.classList.toggle('hidden', opUseBox.querySelector('select').value === 'N'); }
+  opUseBox.querySelector('select').addEventListener('change', syncOpVisibility);
+  syncOpVisibility();
+
+  // ── 첫방문 이벤트 ──
+  var evCard = el('div','card');
+  evCard.appendChild(el('h3', null, '첫방문 이벤트'));
+  var evUseBox = selectField_('첫방문 이벤트 사용', ['Y','N'], data['첫방문 이벤트 사용'],
+    { hint: 'N 이면 아래 항목은 비워두셔도 됩니다' });
+  evCard.appendChild(evUseBox);
+  var evMethodBox = selectField_('이벤트 방식', ['쿠폰 발급','예약상품 할인'], data['이벤트 방식'],
+    { hint: '★ 둘 중 하나만 선택할 수 있습니다. 쿠폰과 예약상품 할인을 동시에 쓰면 할인이 두 번 적용됩니다' });
+  evCard.appendChild(evMethodBox);
+  body.appendChild(evCard);
+
+  // ── 쿠폰 상세 (이벤트 방식 = 쿠폰 발급일 때만) ──
+  var couponCard = el('div','card');
+  couponCard.appendChild(el('h3', null, '쿠폰 상세'));
+  couponCard.appendChild(field('할인 방식', 'text', data['할인 방식'], { hint: '정액 또는 정률' }));
+  couponCard.appendChild(field('할인 값', 'number', data['할인 값'], { hint: '정액이면 원 단위, 정률이면 % 숫자만 | 예) 50000' }));
+  couponCard.appendChild(field('적용 대상 시술', 'text', data['적용 대상 시술'], { hint: '특정 시술만이면 시술명을 적어주세요 | 예) 전체 시술' }));
+  couponCard.appendChild(field('최소 결제 금액', 'number', data['최소 결제 금액'], { hint: '조건이 없으면 0' }));
+  couponCard.appendChild(selectField_('다른 할인과 중복 사용', ['Y','N'], data['다른 할인과 중복 사용'], {}));
+  couponCard.appendChild(field('쿠폰 유효기간', 'text', data['쿠폰 유효기간'], { hint: '예) 발급일로부터 30일' }));
+  couponCard.appendChild(field('쿠폰 발급 경로', 'text', data['쿠폰 발급 경로'], { hint: '예) 네이버 예약 쿠폰 + 문자 발송' }));
+  body.appendChild(couponCard);
+
+  function syncEventVisibility(){
+    var useOn = evUseBox.querySelector('select').value !== 'N';
+    evMethodBox.classList.toggle('hidden', !useOn);
+    var showCoupon = useOn && evMethodBox.querySelector('select').value === '쿠폰 발급';
+    couponCard.classList.toggle('hidden', !showCoupon);
+  }
+  evUseBox.querySelector('select').addEventListener('change', syncEventVisibility);
+  evMethodBox.querySelector('select').addEventListener('change', syncEventVisibility);
+  syncEventVisibility();
+
+  // ── 신규 고객 확인 ──
+  var newCard = el('div','card');
+  newCard.appendChild(el('h3', null, '신규 고객 확인'));
+  var newTypeBox = selectField_('신규 판정 방식', ['쿠폰 소지 확인','예약 이력 자동','매장 확인'], data['신규 판정 방식'],
+    { hint: '첫방문 혜택을 누구에게 줄지 판단하는 방법입니다.' });
+  newCard.appendChild(newTypeBox);
+  newCard.appendChild(field('신규 확인 안내 문구', 'textarea', data['신규 확인 안내 문구'],
+    { max: 300, hint: '고객에게 보여줄 안내입니다. 신규 확인 방법과 준비물을 적어주세요.' }));
+  var notNewBox = field('신규가 아닐 경우 처리', 'text', data['신규가 아닐 경우 처리'], { hint: '현장에서 신규가 아닌 것으로 확인됐을 때' });
+  newCard.appendChild(notNewBox);
+  body.appendChild(newCard);
+
+  function syncNewCustomer(){
+    var strict = newTypeBox.querySelector('select').value === '매장 확인';
+    notNewBox.style.cssText = strict ? 'background:var(--accent-soft);border-radius:8px;padding:10px' : '';
+  }
+  newTypeBox.querySelector('select').addEventListener('change', syncNewCustomer);
+  syncNewCustomer();
+
+  // ── 알림 설정 ──
+  var notiCard = el('div','card');
+  notiCard.appendChild(el('h3', null, '알림 설정'));
+  notiCard.appendChild(selectField_('알림톡 사용', ['Y','N'], data['알림톡 사용'] || 'Y', {}));
+  notiCard.appendChild(selectField_('예약 확정 알림', ['Y','N'], data['예약 확정 알림'] || 'Y', { hint: '고객에게 즉시 발송' }));
+  notiCard.appendChild(field('예약 확정 안내 문구', 'textarea', data['예약 확정 안내 문구'],
+    { max: 500, hint: '예약이 확정됐을 때 고객에게 보낼 문구입니다. 준비물·주차·방문 안내를 담아주세요.' }));
+  notiCard.appendChild(selectField_('리마인드 1차 시점', BOOKING_REMIND_OPTS, data['리마인드 1차 시점'] || '1일 전', {}));
+  notiCard.appendChild(selectField_('리마인드 1차 발송 시각', BOOKING_TIME_OPTS, data['리마인드 1차 발송 시각'] || '오후 6시', {}));
+  var remind2TimeBox = selectField_('리마인드 2차 시점', BOOKING_REMIND_OPTS, data['리마인드 2차 시점'] || '미발송',
+    { hint: '한 번만 보내시려면 "미발송"을 선택하세요' });
+  notiCard.appendChild(remind2TimeBox);
+  var remind2ClockBox = selectField_('리마인드 2차 발송 시각', BOOKING_TIME_OPTS, data['리마인드 2차 발송 시각'], {});
+  notiCard.appendChild(remind2ClockBox);
+  notiCard.appendChild(field('리마인드 안내 문구', 'textarea', data['리마인드 안내 문구'],
+    { max: 500, hint: '방문 전에 보낼 문구입니다. 방문 일시·준비물·주차 안내를 담아주세요.' }));
+  notiCard.appendChild(selectField_('취소 알림', ['Y','N'], data['취소 알림'] || 'Y', {}));
+  notiCard.appendChild(field('예약 취소 안내 문구', 'textarea', data['예약 취소 안내 문구'],
+    { max: 500, hint: '예약이 취소됐을 때 보낼 문구입니다. 재예약 안내·환불 기준을 담아주세요.' }));
+  notiCard.appendChild(field('관리자 수신 번호', 'tel', data['관리자 수신 번호'], { hint: '새 예약이 들어올 때 받을 번호 | 예) 010-1234-5678' }));
+  body.appendChild(notiCard);
+
+  function syncRemind2(){
+    remind2ClockBox.classList.toggle('hidden', remind2TimeBox.querySelector('select').value === '미발송');
+  }
+  remind2TimeBox.querySelector('select').addEventListener('change', syncRemind2);
+  syncRemind2();
+
+  // ── 예약자 정보요청 ──
+  var infoCard = el('div','card');
+  infoCard.appendChild(el('h3', null, '예약자 정보요청'));
+  [['이름',''], ['연락처',''], ['성별','시술 준비에 도움이 됩니다'], ['생년월일',''],
+   ['피부 고민','시술 준비에 도움이 됩니다'], ['시술 이력 · 알레르기','안전 확인용'],
+   ['방문 경로','예) 검색 / 지인 소개 / SNS'], ['요청 사항','자유 입력란']].forEach(function(pair){
+    infoCard.appendChild(selectField_(pair[0], BOOKING_INFO_OPTS, data[pair[0]], { hint: pair[1] }));
+  });
+  body.appendChild(infoCard);
+};
+
+
+// ══════════════════════════════════════════════════════
 // 이미지 단계 — 실제 동작
 // ══════════════════════════════════════════════════════
 StepRenderers.image = function(body, data){
