@@ -1105,6 +1105,314 @@ StepCollectors.menu = function(){
 
 
 // ══════════════════════════════════════════════════════
+// 패키지
+//  05_패키지 TAB_SPEC.cols 순서 = 패키지명·구성시술(텍스트)·반복횟수·개별합계·판매가·총소요시간·유효기간·설명
+//  구성 시술은 '등 관리 1회 + 바디 각질제거 1회' 형태의 한 칸짜리 텍스트로 저장합니다 (시트 C열 그대로).
+//  개별 합계·총소요시간은 04_시술마스터(menu) 값을 가져와 이 화면에서 계산해 채웁니다.
+// ══════════════════════════════════════════════════════
+var PKG_CAPACITY = 20;
+
+function pkgNewId_(){ return 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7); }
+
+/** 시술명 → {price, duration}. 04_시술마스터(menu) 단계 값을 그대로 씁니다. */
+function pkgMenuLookup_(){
+  var rows = (APP.session.data.menu && APP.session.data.menu.rows) || [];
+  var map = {};
+  rows.forEach(function(r){
+    var name = r[1];
+    if (name && !map[name]) map[name] = { price: Number(r[3]) || 0, duration: Number(r[2]) || 0 };
+  });
+  return map;
+}
+
+function pkgComposeComponentText_(components){
+  return components.map(function(c){ return c.name + ' ' + c.count + '회'; }).join(' + ');
+}
+
+/** '등 관리 1회 + 바디 각질제거 1회' → [{name,count}]. 마스터에 없는 이름은 버립니다(예전에 지운 시술 등). */
+function pkgParseComponentText_(text, lookup){
+  if (!text) return [];
+  return String(text).split('+').map(function(part){
+    var m = part.trim().match(/^(.+?)\s+(\d+)\s*회$/);
+    if (!m) return null;
+    return { name: m[1].trim(), count: Number(m[2]) };
+  }).filter(function(x){ return x && lookup[x.name]; });
+}
+
+function pkgCompute_(components, repeatCount, lookup){
+  var perSetAmount = 0, perSetMinutes = 0;
+  components.forEach(function(c){
+    var info = lookup[c.name] || { price: 0, duration: 0 };
+    perSetAmount += info.price * c.count;
+    perSetMinutes += info.duration * c.count;
+  });
+  var rc = Number(repeatCount) || 0;
+  return { total: perSetAmount * rc, totalMinutes: perSetMinutes * rc };
+}
+
+function pkgItemsFromData(data){
+  var rows = (data && data.rows) || [];
+  var lookup = pkgMenuLookup_();
+  return rows.map(function(r){
+    return {
+      id: pkgNewId_(), name: r[0] || '', components: pkgParseComponentText_(r[1], lookup),
+      repeatCount: r[2] || 1, saleAmount: r[4] || '',
+      duration: r[5] || '', durationTouched: !!r[5], validity: r[6] || '', desc: r[7] || ''
+    };
+  });
+}
+
+function pkgReadDom_(host){
+  var items = [];
+  host.querySelectorAll('[data-pkg-id]').forEach(function(card){
+    var it = { id: card.dataset.pkgId };
+    ['name','repeatCount','saleAmount','duration','validity','desc'].forEach(function(k){
+      var n = card.querySelector('[data-pkg-field="' + k + '"]');
+      it[k] = n ? n.value : '';
+    });
+    var comps = [];
+    try { comps = JSON.parse(card.dataset.pkgComponents || '[]'); } catch (e) {}
+    it.components = comps;
+    it.durationTouched = card.dataset.pkgDurationTouched === '1';
+    items.push(it);
+  });
+  return items;
+}
+
+function pkgHiddenField_(field, value){
+  var input = document.createElement('input');
+  input.type = 'hidden';
+  input.dataset.pkgField = field;
+  input.value = value === undefined || value === null ? '' : value;
+  return input;
+}
+
+function pkgMenuOptionsDatalist_(lookup){
+  var dl = document.createElement('datalist');
+  dl.id = 'pkgMenuOptions';
+  Object.keys(lookup).forEach(function(name){
+    var o = document.createElement('option'); o.value = name; dl.appendChild(o);
+  });
+  return dl;
+}
+
+function pkgCard_(it, isFirst, isLast, isOpen, lookup, handlers){
+  var card = el('div','menu-card');
+  card.dataset.pkgId = it.id;
+  card.dataset.pkgComponents = JSON.stringify(it.components);
+  card.dataset.pkgDurationTouched = it.durationTouched ? '1' : '0';
+
+  var calc = pkgCompute_(it.components, it.repeatCount, lookup);
+
+  var head = el('div','menu-card-head');
+  var left = el('div','menu-card-left');
+  left.appendChild(el('span','acc-caret', isOpen ? '▾' : '▸'));
+  var summaryTxt = (it.name || '(이름 없음)') +
+    (it.saleAmount ? ' · ' + menuFormatPrice_(it.saleAmount) : '') +
+    (it.components.length ? ' · 시술 ' + it.components.length + '개' : '');
+  left.appendChild(el('span','menu-card-summary', esc(summaryTxt)));
+  left.addEventListener('click', handlers.onToggle);
+  head.appendChild(left);
+
+  var actions = el('div','menu-actions');
+  var upBtn = el('button','ghost','↑'); upBtn.type = 'button'; upBtn.disabled = isFirst;
+  upBtn.addEventListener('click', function(){ handlers.onMove('up'); });
+  var downBtn = el('button','ghost','↓'); downBtn.type = 'button'; downBtn.disabled = isLast;
+  downBtn.addEventListener('click', function(){ handlers.onMove('down'); });
+  var dupBtn = el('button','ghost','복제'); dupBtn.type = 'button';
+  dupBtn.addEventListener('click', handlers.onDuplicate);
+  var delBtn = el('button','ghost','삭제'); delBtn.type = 'button';
+  delBtn.style.color = 'var(--err)'; delBtn.style.borderColor = '#EBC7C2';
+  delBtn.addEventListener('click', function(){ if (confirm('이 패키지를 삭제할까요?')) handlers.onDelete(); });
+  [upBtn, downBtn, dupBtn, delBtn].forEach(function(b){ actions.appendChild(b); });
+  head.appendChild(actions);
+  card.appendChild(head);
+
+  if (!isOpen){
+    var hidden = { name: it.name, repeatCount: it.repeatCount, saleAmount: it.saleAmount,
+                   duration: it.duration, validity: it.validity, desc: it.desc };
+    Object.keys(hidden).forEach(function(k){ card.appendChild(pkgHiddenField_(k, hidden[k])); });
+    return card;
+  }
+
+  card.appendChild(menuField_('패키지명 (30자)', menuTextInput_('name', it.name, 30)));
+
+  // ── 구성 시술 ──
+  card.appendChild(el('label', null, '구성 시술'));
+  var compList = el('div');
+  it.components.forEach(function(c, ci){
+    var row = el('div','row');
+    row.style.marginBottom = '6px';
+    row.appendChild(el('span','meta', esc(c.name) + ' · ' + c.count + '회'));
+    var rm = el('button','ghost','빼기'); rm.type = 'button';
+    rm.style.cssText = 'width:auto;margin:0;padding:4px 10px;font-size:12px;flex:0 0 auto';
+    rm.addEventListener('click', function(){ handlers.onRemoveComponent(ci); });
+    row.appendChild(rm);
+    compList.appendChild(row);
+  });
+  if (!it.components.length) compList.appendChild(el('p','hint','아직 구성 시술이 없습니다. 아래에서 추가하세요.'));
+  card.appendChild(compList);
+
+  var addRow = el('div','row');
+  var nameInput = document.createElement('input');
+  nameInput.type = 'text'; nameInput.setAttribute('list','pkgMenuOptions');
+  nameInput.placeholder = '시술명 검색';
+  var countInput = document.createElement('input');
+  countInput.type = 'number'; countInput.value = 1; countInput.min = 1;
+  countInput.style.flex = '0 0 70px';
+  var addBtn = el('button','ghost','추가'); addBtn.type = 'button';
+  addBtn.style.cssText = 'width:auto;margin:0;padding:0 14px;flex:0 0 auto';
+  addBtn.addEventListener('click', function(){
+    if (!lookup[nameInput.value]){ toast('시술메뉴에 있는 이름만 고를 수 있습니다.'); return; }
+    handlers.onAddComponent(nameInput.value, Number(countInput.value) || 1);
+  });
+  addRow.appendChild(nameInput); addRow.appendChild(countInput); addRow.appendChild(addBtn);
+  card.appendChild(addRow);
+  if (!Object.keys(lookup).length) card.appendChild(el('p','hint','시술메뉴에 등록된 시술이 없습니다. 먼저 시술메뉴 단계를 채워주세요.'));
+
+  card.appendChild(menuField_('반복 횟수', menuNumberInput_('repeatCount', it.repeatCount)));
+  card.appendChild(el('p','hint','1세트를 몇 번 반복하는지입니다. 등관리 10회권처럼 단일 시술이면 구성 시술 1개 + 반복 10회로 넣으세요.'));
+
+  var preview = el('div','card');
+  preview.style.background = 'var(--accent-soft)';
+  preview.style.margin = '10px 0';
+  var previewTxt = it.components.length
+    ? it.components.map(function(c){ return c.name + ' ' + (c.count * (Number(it.repeatCount) || 0)) + '회'; }).join(' + ') +
+      ' · 총 정가 ' + (calc.total ? Number(calc.total).toLocaleString() + '원' : '-') +
+      ' · 총 ' + (calc.totalMinutes || '-') + '분'
+    : '구성 시술을 추가하면 미리보기가 여기 뜹니다.';
+  preview.appendChild(el('p', null, esc(previewTxt)));
+  card.appendChild(preview);
+
+  var priceLine = el('div','row');
+  priceLine.appendChild(menuField_('판매가(원)', menuNumberInput_('saleAmount', it.saleAmount)));
+  card.appendChild(priceLine);
+  if (calc.total && it.saleAmount){
+    var pct = Math.round((calc.total - Number(it.saleAmount)) / calc.total * 100);
+    if (!isNaN(pct)) card.appendChild(el('p','hint', pct + '% 할인 (개별 합계 ' + calc.total.toLocaleString() + '원 기준)'));
+  }
+
+  var durationInput = menuNumberInput_('duration', it.duration || calc.totalMinutes || '');
+  durationInput.addEventListener('input', function(){ handlers.onDurationEdit(); });
+  card.appendChild(menuField_('총 소요시간(분)', durationInput));
+  card.appendChild(el('p','hint','구성 시술 시간을 자동으로 더했습니다. 묶어서 진행하면 시간이 줄어드는 경우 직접 고쳐도 됩니다.'));
+
+  card.appendChild(menuField_('유효기간', menuTextInput_('validity', it.validity)));
+  card.appendChild(menuField_('설명 (300자)', (function(){
+    var ta = document.createElement('textarea');
+    ta.dataset.pkgField = 'desc'; ta.maxLength = 300; ta.value = it.desc || '';
+    ta.style.minHeight = '70px';
+    return ta;
+  })()));
+
+  // menuField_ 는 data-menu-field 를 붙이므로, 패키지 전용 data-pkg-field 로 다시 태깅합니다.
+  card.querySelectorAll('[data-menu-field]').forEach(function(n){
+    n.dataset.pkgField = n.dataset.menuField;
+    n.removeAttribute('data-menu-field');
+  });
+
+  return card;
+}
+
+StepRenderers['package'] = function(body, data){
+  body.appendChild(el('h2','page-h','패키지'));
+  body.appendChild(el('p','page-sub',
+    '04_시술마스터에 등록한 시술을 묶어 파는 상품입니다. 할인가는 여기서 정하고, ' +
+    '개별 합계·할인율은 자동으로 계산됩니다.'));
+
+  var lookup = pkgMenuLookup_();
+  body.appendChild(pkgMenuOptionsDatalist_(lookup));
+
+  var items = pkgItemsFromData(data);
+  var openItems = {};
+  var host = el('div');
+
+  function syncFromDom_(){
+    var live = pkgReadDom_(host);
+    if (live.length) items = live;
+  }
+
+  function repaint(){
+    lookup = pkgMenuLookup_();
+    host.innerHTML = '';
+    if (!items.length){
+      host.appendChild(el('div','placeholder','아직 등록한 패키지가 없습니다. 아래에서 추가하세요.'));
+    }
+    items.forEach(function(it, idx){
+      host.appendChild(pkgCard_(it, idx === 0, idx === items.length - 1, !!openItems[it.id], lookup, {
+        onToggle: function(){ syncFromDom_(); openItems[it.id] = !openItems[it.id]; repaint(); },
+        onDuplicate: function(){
+          syncFromDom_();
+          var src = items.filter(function(x){ return x.id === it.id; })[0];
+          var copy = {}; Object.keys(src).forEach(function(k){ copy[k] = src[k]; });
+          copy.id = pkgNewId_(); copy.components = src.components.slice();
+          items.splice(items.indexOf(src) + 1, 0, copy);
+          openItems[copy.id] = true;
+          repaint(); touch();
+        },
+        onDelete: function(){ syncFromDom_(); items = items.filter(function(x){ return x.id !== it.id; }); repaint(); touch(); },
+        onMove: function(dir){
+          syncFromDom_();
+          var i = items.findIndex(function(x){ return x.id === it.id; });
+          var j = dir === 'up' ? i - 1 : i + 1;
+          if (j < 0 || j >= items.length) return;
+          var tmp = items[i]; items[i] = items[j]; items[j] = tmp;
+          repaint(); touch();
+        },
+        onAddComponent: function(name, count){
+          syncFromDom_();
+          var cur = items.filter(function(x){ return x.id === it.id; })[0];
+          cur.components.push({ name: name, count: count });
+          repaint(); touch();
+        },
+        onRemoveComponent: function(ci){
+          syncFromDom_();
+          var cur = items.filter(function(x){ return x.id === it.id; })[0];
+          cur.components.splice(ci, 1);
+          repaint(); touch();
+        },
+        onDurationEdit: function(){
+          var cardEl = host.querySelector('[data-pkg-id="' + it.id + '"]');
+          if (cardEl) cardEl.dataset.pkgDurationTouched = '1';
+        }
+      }));
+    });
+
+    var addBtn = el('button','ghost','+ 새 패키지 추가');
+    addBtn.type = 'button';
+    addBtn.addEventListener('click', function(){
+      syncFromDom_();
+      if (items.length >= PKG_CAPACITY){ toast('패키지는 최대 ' + PKG_CAPACITY + '개까지 등록할 수 있습니다.'); return; }
+      var newItem = { id: pkgNewId_(), name: '', components: [], repeatCount: 1, saleAmount: '',
+                       duration: '', durationTouched: false, validity: '', desc: '' };
+      items.push(newItem);
+      openItems[newItem.id] = true;
+      repaint(); touch();
+    });
+    host.appendChild(addBtn);
+  }
+
+  body.appendChild(host);
+  repaint();
+};
+
+StepCollectors['package'] = function(){
+  var host = document.querySelector('#stepBody');
+  var items = pkgReadDom_(host);
+  var lookup = pkgMenuLookup_();
+  var rows = items.slice(0, PKG_CAPACITY).map(function(it){
+    var calc = pkgCompute_(it.components, it.repeatCount, lookup);
+    var duration = it.durationTouched ? it.duration : (it.duration || calc.totalMinutes);
+    return [
+      it.name, pkgComposeComponentText_(it.components), it.repeatCount, calc.total,
+      it.saleAmount, duration, it.validity, it.desc
+    ];
+  });
+  return { rows: rows };
+};
+
+
+// ══════════════════════════════════════════════════════
 // 이미지 단계 — 실제 동작
 // ══════════════════════════════════════════════════════
 StepRenderers.image = function(body, data){
