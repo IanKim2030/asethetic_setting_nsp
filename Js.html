@@ -1434,14 +1434,32 @@ function selectField_(label, options, cur, opt){
   var sel = document.createElement('select');
   sel.dataset.f = label;
   options.forEach(function(o){
-    var op = document.createElement('option'); op.value = o; op.textContent = o;
-    if (o === v) op.selected = true;
+    var val = Array.isArray(o) ? o[0] : o, txt = Array.isArray(o) ? o[1] : o;
+    var op = document.createElement('option'); op.value = val; op.textContent = txt;
+    if (val === v) op.selected = true;
     sel.appendChild(op);
   });
   box.appendChild(sel);
   if (opt.hint) box.appendChild(el('p','hint', esc(opt.hint)));
   box.appendChild(el('div', null, '<div style="height:14px"></div>'));
   return box;
+}
+
+/** 편의시설처럼 "있는 것만 탭"으로 고르는 Y/N 묶음. 체크박스를 칩처럼 꾸민 것뿐이라 별도 수집 로직이 필요 없습니다. */
+function chipCheckboxRow_(labels, data){
+  var wrap = el('div');
+  wrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:10px 0';
+  labels.forEach(function(label){
+    var cur = data[label];
+    var checked = ((cur && typeof cur === 'object') ? cur.v : cur) === 'Y';
+    var lab = el('label','chip-toggle');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.dataset.f = label; cb.checked = checked;
+    lab.appendChild(cb);
+    lab.appendChild(el('span', null, esc(label)));
+    wrap.appendChild(lab);
+  });
+  return wrap;
 }
 
 var BOOKING_TIME_OPTS = ['오전 9시','오전 10시','오전 11시','오후 12시','오후 1시','오후 2시','오후 3시',
@@ -1935,6 +1953,138 @@ StepCollectors.product = function(){
   });
   return { rows: rows };
 };
+
+
+// ══════════════════════════════════════════════════════
+// 부가정보 — 02_부가정보 (vertical, B열 항목명 매칭)
+// ══════════════════════════════════════════════════════
+var EXTRA_PAY_CHIPS = ['네이버페이','카카오페이','토스','삼성페이','애플페이'];
+
+StepRenderers.extra = function(body, data){
+  body.appendChild(el('h2','page-h','부가정보'));
+  body.appendChild(el('p','page-sub',
+    '업체 상세설명·대표 키워드·홈페이지 등 홍보 채널은 기본정보 단계에 있습니다. 이 단계는 권장이며 나중에 채워도 됩니다.'));
+
+  // ── 시설 규모 ──
+  var scaleCard = el('div','card');
+  scaleCard.appendChild(el('h3', null, '시설 규모'));
+  scaleCard.appendChild(field('관리실(룸) 개수', 'number', data['관리실(룸) 개수'], { hint: '숫자만 | 예) 4' }));
+  scaleCard.appendChild(field('관리사 인원', 'number', data['관리사 인원'], { hint: '동시 접수 가능 인원 산정에 사용 | 예) 3' }));
+  scaleCard.appendChild(field('매장 평수', 'number', data['매장 평수'], { hint: '예) 40' }));
+  body.appendChild(scaleCard);
+
+  // ── 주차 ──
+  var parkCard = el('div','card');
+  parkCard.appendChild(el('h3', null, '주차'));
+  var ownParkBox = selectField_('자체 주차 가능', ['Y','N'], data['자체 주차 가능'],
+    { hint: '건물 자체 주차장 이용 가능 여부' });
+  parkCard.appendChild(ownParkBox);
+  parkCard.appendChild(field('주차 안내', 'textarea', data['주차 안내'],
+    { max: 400, hint: '자체 주차장 이용 방법·무료 시간·주차 위치를 적어주세요.' }));
+  var altParkWrap = el('div');
+  altParkWrap.appendChild(field('인근 대체 주차장 이용', 'text', data['인근 대체 주차장 이용'], { hint: '자체 주차가 어려울 때 안내할 곳이 있으면 Y' }));
+  altParkWrap.appendChild(field('대체 주차장 주소', 'textarea', data['대체 주차장 주소'],
+    { hint: '도로명 주소로 적어주세요. 여러 곳이면 줄바꿈으로 구분' }));
+  parkCard.appendChild(altParkWrap);
+  var supportBox = selectField_('주차비 지원 가능', ['Y','N'], data['주차비 지원 가능'], { hint: '주차비를 대신 내주거나 할인해 주는 경우' });
+  parkCard.appendChild(supportBox);
+  var supportCondBox = field('주차비 지원 조건', 'text', data['주차비 지원 조건'], { hint: '금액·시간 조건을 함께 적어주세요' });
+  parkCard.appendChild(supportCondBox);
+  body.appendChild(parkCard);
+
+  function syncParking(){
+    var ownYes = ownParkBox.querySelector('select').value === 'Y';
+    altParkWrap.classList.toggle('hidden', ownYes);
+    altParkWrap.style.cssText = ownYes ? '' : 'background:var(--accent-soft);border-radius:8px;padding:10px';
+    supportCondBox.classList.toggle('hidden', supportBox.querySelector('select').value !== 'Y');
+  }
+  ownParkBox.querySelector('select').addEventListener('change', syncParking);
+  supportBox.querySelector('select').addEventListener('change', syncParking);
+  syncParking();
+
+  // ── 편의시설 (있는 것만 탭) ──
+  var amenityCard = el('div','card');
+  amenityCard.appendChild(el('h3', null, '편의시설'));
+  amenityCard.appendChild(el('p','hint','해당하는 것만 탭해서 골라주세요.'));
+  amenityCard.appendChild(chipCheckboxRow_(['개인룸','샤워 시설','와이파이','여성 전용','남성 이용 가능','예약제 운영'], data));
+  body.appendChild(amenityCard);
+
+  // ── 장애인 편의시설 ──
+  var accCard = el('div','card');
+  accCard.appendChild(el('h3', null, '장애인 편의시설'));
+  var accYn = [['Y','가능'], ['N','어려움']];
+  accCard.appendChild(selectField_('휠체어 이용 가능 출입구', accYn, data['휠체어 이용 가능 출입구'],
+    { hint: '턱·계단 없이 진입 가능하면 가능. 경사로·엘리베이터 포함' }));
+  accCard.appendChild(selectField_('휠체어 이용 가능 화장실', accYn, data['휠체어 이용 가능 화장실'],
+    { hint: '휠체어가 들어가고 회전할 수 있는 화장실' }));
+  accCard.appendChild(selectField_('휠체어 이용 가능 좌석', accYn, data['휠체어 이용 가능 좌석'],
+    { hint: '휠체어에서 이동하지 않고 이용 가능한 관리 베드·좌석' }));
+  accCard.appendChild(selectField_('장애인 전용 주차구역', accYn, data['장애인 전용 주차구역'],
+    { hint: '건물 또는 인근에 전용 구역이 있으면 가능' }));
+  accCard.appendChild(field('장애인 편의 안내', 'textarea', data['장애인 편의 안내'],
+    { hint: '위 항목으로 설명이 부족한 부분을 적어주세요 | 예) 엘리베이터로 3층 진입 가능, 화장실은 2층 공용 이용' }));
+  body.appendChild(accCard);
+
+  // ── 결제수단 ──
+  var payCard = el('div','card');
+  payCard.appendChild(el('h3', null, '결제수단'));
+  payCard.appendChild(chipCheckboxRow_(['신용/체크카드','현금영수증','제로페이','고유가 지원금'], data));
+
+  var lp1 = selectField_('지역화폐 (지류)', ['Y','N'], data['지역화폐 (지류)'], { hint: '종이 상품권 형태' });
+  var lp2 = selectField_('지역화폐 (카드)', ['Y','N'], data['지역화폐 (카드)'], { hint: '충전식 카드 형태' });
+  var lp3 = selectField_('지역화폐 (모바일)', ['Y','N'], data['지역화폐 (모바일)'], { hint: '앱 QR·바코드 결제' });
+  [lp1, lp2, lp3].forEach(function(b){ payCard.appendChild(b); });
+  var lpKindBox = field('지역화폐 종류', 'text', data['지역화폐 종류'], { hint: '취급하는 지역화폐 이름을 적어주세요 | 예) 서울사랑상품권' });
+  payCard.appendChild(lpKindBox);
+
+  var easyPayBox = selectField_('간편결제', ['Y','N'], data['간편결제'], {});
+  payCard.appendChild(easyPayBox);
+  var easyPayWrap = el('div');
+  var easyPayChips = el('div');
+  easyPayChips.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin:10px 0';
+  var savedEasyPay = ((data['간편결제 종류'] && typeof data['간편결제 종류'] === 'object') ? data['간편결제 종류'].v : data['간편결제 종류']) || '';
+  var savedEasyPayList = savedEasyPay.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+  var easyPayChipEls = EXTRA_PAY_CHIPS.map(function(name){
+    var lab = el('label','chip-toggle');
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.value = name; cb.checked = savedEasyPayList.indexOf(name) !== -1;
+    lab.appendChild(cb); lab.appendChild(el('span', null, esc(name)));
+    easyPayChips.appendChild(lab);
+    return cb;
+  });
+  easyPayWrap.appendChild(easyPayChips);
+  var easyPayOther = document.createElement('input');
+  easyPayOther.type = 'text'; easyPayOther.placeholder = '그 외 (쉼표로 구분)';
+  easyPayOther.value = savedEasyPayList.filter(function(s){ return EXTRA_PAY_CHIPS.indexOf(s) === -1; }).join(', ');
+  easyPayWrap.appendChild(easyPayOther);
+  var easyPayHidden = document.createElement('input');
+  easyPayHidden.type = 'hidden'; easyPayHidden.dataset.f = '간편결제 종류';
+  easyPayWrap.appendChild(easyPayHidden);
+  payCard.appendChild(easyPayWrap);
+
+  function syncEasyPayValue(){
+    var picked = easyPayChipEls.filter(function(c){ return c.checked; }).map(function(c){ return c.value; });
+    var other = easyPayOther.value.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+    easyPayHidden.value = picked.concat(other).join(', ');
+  }
+  easyPayChipEls.forEach(function(c){ c.addEventListener('change', function(){ syncEasyPayValue(); touch(); }); });
+  easyPayOther.addEventListener('input', function(){ syncEasyPayValue(); touch(); });
+  syncEasyPayValue();
+
+  body.appendChild(payCard);
+
+  function syncPayVisibility(){
+    var anyLocal = [lp1, lp2, lp3].some(function(b){ return b.querySelector('select').value === 'Y'; });
+    lpKindBox.classList.toggle('hidden', !anyLocal);
+    easyPayWrap.classList.toggle('hidden', easyPayBox.querySelector('select').value !== 'Y');
+  }
+  [lp1, lp2, lp3].forEach(function(b){ b.querySelector('select').addEventListener('change', syncPayVisibility); });
+  easyPayBox.querySelector('select').addEventListener('change', syncPayVisibility);
+  syncPayVisibility();
+};
+
+// StepCollectors.extra 는 따로 없습니다 — 간편결제 종류까지 전부 data-f 로 노출돼 있어
+// collectStepData 의 기본 수집만으로 충분합니다 (booking 과 같은 이유).
 
 
 // ══════════════════════════════════════════════════════

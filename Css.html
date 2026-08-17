@@ -78,6 +78,16 @@ main.inner{padding-top:18px;padding-bottom:110px}
   text-align:center;color:var(--muted);font-size:14px;background:var(--sub)}
 .placeholder b{color:var(--ink)}
 
+/* 있는 것만 탭으로 고르는 칩 (편의시설 등) */
+.chip-toggle{display:inline-flex;align-items:center;cursor:pointer;user-select:none}
+.chip-toggle input{position:absolute;opacity:0;width:0;height:0}
+.chip-toggle span{
+  padding:7px 14px;font-size:13px;font-weight:600;border-radius:16px;
+  border:1px solid #DACFC0;background:var(--surface);color:var(--muted);transition:background .12s,color .12s,border-color .12s;
+}
+.chip-toggle input:checked + span{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip-toggle input:focus-visible + span{outline:2px solid var(--accent);outline-offset:1px}
+
 /* 시술메뉴 아코디언 · 카드 */
 .acc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
   cursor:pointer;margin:-16px -16px 12px;padding:16px;border-bottom:1px solid var(--line)}
