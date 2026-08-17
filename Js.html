@@ -299,37 +299,68 @@ StepRenderers.__placeholder = function(body, data, ctx){
     '<span style="font-size:12px">Js.html 의 <code>StepRenderers.' + esc(ctx.stepKey) + '</code> 에 채우세요.</span>'));
 };
 
-/** 예시 — 기본정보 일부만 넣어 두었습니다. 나머지 필드는 같은 방식으로 늘리면 됩니다. */
+/** 01_기본정보 — 재진입 시 입력한 상호명·대표자명을 다시 타이핑하지 않도록 세션 값으로 기본 채움 */
 StepRenderers.basic = function(body, data){
   body.appendChild(el('h2','page-h','기본정보'));
-  body.appendChild(el('p','page-sub','노란 칸에 입력해 주세요. 모르는 항목은 상태를 “상담필요”로 두시면 담당자가 함께 정해드립니다.'));
+  body.appendChild(el('p','page-sub','노란 칸에 입력해 주세요. 모르는 항목은 비워두시면 담당자가 함께 정해드립니다.'));
 
   var c1 = el('div','card');
   c1.appendChild(el('h3', null, '업체 정보'));
-  c1.appendChild(field('상호명', 'text', data['상호명'], {
+  c1.appendChild(field('상호명', 'text', callVal_(data['상호명'], APP.session.shopName), {
     required:true, hint:'지역명·홍보문구는 네이버 심사에서 반려됩니다. ❌ 강남 최고 피부관리 OO샵 → ✅ OO샵', max:30
   }));
-  c1.appendChild(field('지점명', 'text', data['지점명'], {hint:'지점이 여러 개일 때만'}));
+  c1.appendChild(field('지점명', 'text', data['지점명'], {hint:'지점이 여러 개일 때만 | 예) 강남점'}));
   body.appendChild(c1);
 
   var c2 = el('div','card');
   c2.appendChild(el('h3', null, '위치'));
-  c2.appendChild(field('주소(도로명)', 'text', data['주소(도로명)'], {required:true, hint:'우편번호 검색 API 연결 예정'}));
-  c2.appendChild(field('상세주소(층/호)', 'text', data['상세주소(층/호)'], {required:true, hint:'상가 입점이 대부분이라 층수가 중요합니다'}));
-  c2.appendChild(field('찾아오는 길', 'text', data['찾아오는 길'], {hint:'간판이 작거나 없으면 꼭 적어주세요'}));
+  c2.appendChild(field('주소(도로명)', 'text', data['주소(도로명)'], {required:true, hint:'우편번호 검색 결과 그대로 | 예) 서울 강남구 테헤란로 123 (우편번호 검색 API 연결 예정)'}));
+  c2.appendChild(field('상세주소(층/호)', 'text', data['상세주소(층/호)'], {required:true, hint:'상가 입점이 대부분이라 층수가 중요합니다 | 예) 대한빌딩 3층 302호'}));
+  c2.appendChild(field('찾아오는 길', 'text', data['찾아오는 길'], {hint:'간판이 작거나 없으면 꼭 적어주세요 | 예) 1층 카페 옆 계단으로 3층'}));
   body.appendChild(c2);
 
   var c3 = el('div','card');
   c3.appendChild(el('h3', null, '연락처'));
   c3.appendChild(field('대표 전화', 'tel', data['대표 전화'], {
-    required:true, hint:'스마트콜 0507 번호로 걸려온 전화가 이 번호로 연결됩니다 (1차 착신)'
+    required:true, hint:'스마트콜 0507 번호로 걸려온 전화가 이 번호로 연결됩니다 (1차 착신). 08_스마트콜 탭 참고'
   }));
+  c3.appendChild(field('휴대폰', 'tel', data['휴대폰'], {
+    required:true, hint:'뒷 4자리가 재진입 시 본인 확인에 사용됩니다. 고객에게는 공개되지 않습니다' +
+      (APP.session.phone4 ? (' (처음 들어오실 때 입력하신 뒷자리: ' + APP.session.phone4 + ')') : '')
+  }));
+  c3.appendChild(field('카카오톡 채널', 'text', data['카카오톡 채널'], {hint:'채널 URL | 예) http://pf.kakao.com/_abcd'}));
   body.appendChild(c3);
 
-  body.appendChild(el('div','placeholder',
-    '홍보 · 소개·키워드 · 사업자 정보 항목은 아직 넣지 않았습니다.<br>' +
-    '<span style="font-size:12px">위 <code>field()</code> 호출을 늘려서 채우세요.</span>'));
+  var c4 = el('div','card');
+  c4.appendChild(el('h3', null, '홍보'));
+  c4.appendChild(field('홈페이지', 'text', data['홈페이지'], {hint:'예) https://raon.co.kr'}));
+  c4.appendChild(field('네이버 블로그', 'text', data['네이버 블로그'], {hint:'블로그 주소 | 예) https://blog.naver.com/raon'}));
+  c4.appendChild(field('인스타그램', 'text', data['인스타그램'], {hint:'@핸들 또는 URL | 예) @raon_esthetic'}));
+  c4.appendChild(field('유튜브', 'text', data['유튜브'], {hint:'채널 주소 | 예) https://youtube.com/@raon'}));
+  body.appendChild(c4);
+
+  var c5 = el('div','card');
+  c5.appendChild(el('h3', null, '소개 · 키워드'));
+  c5.appendChild(field('업체 상세설명', 'textarea', data['업체 상세설명'], {
+    max:2000, hint:'시술 특징·차별점·이용 안내를 담아주세요 | 예) 1:1 맞춤 케어로 피부 본연의 힘을 되찾아 드립니다. 10년 경력 원장이 직접 상담 후...'
+  }));
+  ['대표 키워드 1','대표 키워드 2','대표 키워드 3','대표 키워드 4','대표 키워드 5'].forEach(function(label, i){
+    var examples = ['강남피부관리','등관리전문','여드름케어','왁싱','커플관리'];
+    c5.appendChild(field(label, 'text', data[label], {max:15, hint:'예) ' + examples[i]}));
+  });
+  body.appendChild(c5);
+
+  var c6 = el('div','card');
+  c6.appendChild(el('h3', null, '사업자 정보'));
+  c6.appendChild(field('대표자명', 'text', callVal_(data['대표자명'], APP.session.ownerName), {
+    required:true, hint:'업체 식별 키로 사용됩니다. 반드시 입력해 주세요 | 예) 홍길동'
+  }));
+  c6.appendChild(field('사업자등록번호', 'text', data['사업자등록번호'], {hint:'10자리 | 예) 123-45-67890'}));
+  body.appendChild(c6);
 };
+
+// StepCollectors.basic 은 따로 없습니다 — 전부 data-f 로 노출돼 있어
+// collectStepData 의 기본 수집만으로 충분합니다 (booking · extra 와 같은 이유).
 
 /** 입력 한 줄 만들기 — 값 + 상태(입력완료/미입력/상담필요) */
 function field(label, type, cur, opt){
