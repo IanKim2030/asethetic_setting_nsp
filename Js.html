@@ -342,7 +342,7 @@ function field(label, type, cur, opt){
 
   var input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
   if (type !== 'textarea') input.type = type;
-  input.dataset.f = label;
+  input.dataset.f = opt.key || label;
   input.value = v;
   if (opt.max) input.maxLength = opt.max;
   box.appendChild(input);
@@ -1432,7 +1432,7 @@ function selectField_(label, options, cur, opt){
   var box = el('div');
   box.appendChild(el('label', null, esc(label) + (opt.required ? ' <span style="color:var(--err)">*</span>' : '')));
   var sel = document.createElement('select');
-  sel.dataset.f = label;
+  sel.dataset.f = opt.key || label;
   options.forEach(function(o){
     var val = Array.isArray(o) ? o[0] : o, txt = Array.isArray(o) ? o[1] : o;
     var op = document.createElement('option'); op.value = val; op.textContent = txt;
@@ -2085,6 +2085,136 @@ StepRenderers.extra = function(body, data){
 
 // StepCollectors.extra 는 따로 없습니다 — 간편결제 종류까지 전부 data-f 로 노출돼 있어
 // collectStepData 의 기본 수집만으로 충분합니다 (booking 과 같은 이유).
+
+
+// ══════════════════════════════════════════════════════
+// 스마트콜 — 08_스마트콜 (vertical, 구분+항목 조합키 필요)
+//  "1번 통화연결 · 사용 여부"처럼 사용 여부·안내 멘트가 분기마다 반복되므로
+//  구분(A열)까지 합친 조합키로만 보냅니다 (이름만 보내면 버려짐, CLAUDE.md 참고).
+//  1차 연결 번호는 01_기본정보 대표 전화를 그대로 쓰는 수식 칸이라 여기서는
+//  읽기 전용으로만 보여주고 data-f 를 달지 않습니다 — 값을 보내면 수식이 깨집니다.
+// ══════════════════════════════════════════════════════
+var CALL_WAIT_OPTS = ['15초','20초','30초','45초','2차 사용 안 함'];
+var CALL_BRANCHES = [
+  { group: '1번 통화연결', msg: '상담원을 연결해 드리겠습니다. 잠시만 기다려 주세요.' },
+  { group: '2번 예약안내', msg: '네이버 예약 방법이 문자로 발송되었습니다. 통화 연결을 원하시면 1번을 눌러주세요.' },
+  { group: '3번 오시는길', msg: '찾아오시는 길 정보가 문자로 발송되었습니다. 통화 연결을 원하시면 1번을 눌러주세요.' },
+  { group: '4번 주차안내', msg: '주차는 건물 지하 주차장을 이용하시면 됩니다. 주차 요금은 1시간 30분 동안 무료입니다. 통화 연결을 원하시면 1번을 눌러주세요.',
+    hint: '02_부가정보의 주차 내용과 일치시켜 주세요' },
+  { group: '5번 영업시간', msg: '영업시간은 평일 오전 7시부터 오후 10시까지이며, 휴일은 오전 8시부터 오후 8시까지입니다. 일요일은 18시까지입니다. 통화 연결을 원하시면 1번을 눌러주세요.',
+    hint: '03_영업시간 탭과 일치시켜 주세요' }
+];
+
+function callVal_(cur, fallback){
+  var v = (cur && typeof cur === 'object') ? cur.v : cur;
+  return (v === undefined || v === null || v === '') ? (fallback || '') : v;
+}
+
+StepRenderers.call = async function(body, data){
+  body.appendChild(el('h2','page-h','스마트콜'));
+  body.appendChild(el('p','page-sub',
+    '선택 서비스입니다. 사용하지 않으시면 아래 "스마트콜 사용"만 N으로 두고 넘어가셔도 됩니다. ' +
+    '멘트에는 기본 문구를 미리 넣어뒀습니다 — 우리 샵에 맞게 고칠 부분만 수정해 주세요.'));
+
+  // 스테퍼로 건너뛰어 들어왔을 수 있으므로 기본정보(상호명·대표 전화) 값을 다시 받아옵니다.
+  var loadingNote = el('p','hint','불러오는 중…');
+  body.appendChild(loadingNote);
+  var shopName = '', repPhone = '';
+  try {
+    var br = await call('apiLoadStep', { id: APP.session.id, stepKey: 'basic' });
+    if (br && br.ok) {
+      APP.session.data.basic = br.stepData || APP.session.data.basic;
+      shopName = callVal_(APP.session.data.basic['상호명']);
+      repPhone = callVal_(APP.session.data.basic['대표 전화']);
+    }
+  } catch (e) { /* 실패하면 기존 값으로 진행 */ }
+  loadingNote.remove();
+  shopName = shopName || '저희 매장';
+
+  // ── 스마트 ARS ──
+  var arsCard = el('div','card');
+  arsCard.appendChild(el('h3', null, '스마트 ARS'));
+  var useBox = selectField_('스마트콜 사용', ['Y','N'], data['스마트콜 사용'] || 'Y', {});
+  arsCard.appendChild(useBox);
+
+  var restWrap = el('div');
+  restWrap.appendChild(field('스마트콜 번호 (0507)', 'text', data['스마트콜 번호 (0507)'],
+    { hint: '네이버가 발급하는 번호로, 고객에게는 이 번호가 보입니다. 아직 없으면 비워두세요 (담당자가 발급)' }));
+
+  var phoneBox = el('div');
+  phoneBox.appendChild(el('label', null, '1차 연결 번호'));
+  var phoneInput = document.createElement('input');
+  phoneInput.type = 'tel'; phoneInput.readOnly = true; phoneInput.className = 'readonly';
+  phoneInput.value = repPhone || '(기본정보에 대표 전화를 먼저 입력해 주세요)';
+  phoneBox.appendChild(phoneInput);
+  phoneBox.appendChild(el('p','hint','기본정보 > 대표 전화가 자동으로 사용됩니다. 이 화면에서는 바꿀 수 없습니다.'));
+  restWrap.appendChild(phoneBox);
+
+  restWrap.appendChild(field('2차 연결 번호', 'tel', data['2차 연결 번호'],
+    { hint: '1차 번호로 연결되지 않을 때 대신 받을 번호입니다. 원장님 개인 휴대폰 등' }));
+  restWrap.appendChild(selectField_('2차 전환 대기 시간', CALL_WAIT_OPTS, data['2차 전환 대기 시간'] || '20초',
+    { hint: '1차 번호가 이 시간 동안 안 받으면 2차로 넘어갑니다' }));
+  restWrap.appendChild(field('인사 멘트', 'textarea', callVal_(data['인사 멘트'], '안녕하세요, ' + shopName + '입니다.'),
+    { hint: '전화 연결 시 가장 먼저 나오는 안내입니다' }));
+  arsCard.appendChild(restWrap);
+  body.appendChild(arsCard);
+
+  function syncUse(){ restWrap.classList.toggle('hidden', useBox.querySelector('select').value !== 'Y'); }
+  useBox.querySelector('select').addEventListener('change', syncUse);
+  syncUse();
+
+  // ── ARS 분기 ──
+  var branchCard = el('div','card');
+  branchCard.appendChild(el('h3', null, 'ARS 분기'));
+  branchCard.appendChild(el('p','hint','분기마다 "사용 여부"를 끄면 손님이 그 번호를 눌러도 안내를 듣지 못합니다.'));
+  CALL_BRANCHES.forEach(function(b, idx){
+    var sub = el('div');
+    sub.style.cssText = idx > 0 ? 'margin-top:18px;padding-top:14px;border-top:1px solid var(--line)' : '';
+    sub.appendChild(el('div', null, '<b>' + esc(b.group) + '</b>'));
+    var useKey = b.group + ' · 사용 여부';
+    var msgKey = b.group + ' · 안내 멘트';
+    sub.appendChild(selectField_('사용 여부', ['Y','N'], data[useKey] || 'Y', { key: useKey }));
+    if (b.group === '1번 통화연결') {
+      sub.appendChild(el('p','hint','⚠ 1번을 N으로 끄면 2~5번 멘트의 "1번을 눌러주세요" 안내가 맞지 않게 됩니다. 함께 고쳐주세요.'));
+    }
+    sub.appendChild(field('안내 멘트', 'textarea', callVal_(data[msgKey], b.msg), { key: msgKey, hint: b.hint }));
+    branchCard.appendChild(sub);
+  });
+  body.appendChild(branchCard);
+
+  // ── 기타 안내 ──
+  var etcCard = el('div','card');
+  etcCard.appendChild(el('h3', null, '기타 안내'));
+  etcCard.appendChild(field('영업시간 외 안내', 'textarea',
+    callVal_(data['영업시간 외 안내'], '지금은 영업시간이 아닙니다. 예약은 네이버에서 24시간 가능합니다.'),
+    { hint: '영업시간이 아닐 때 나올 안내' }));
+  etcCard.appendChild(field('부재중 안내', 'textarea',
+    callVal_(data['부재중 안내'], '시술 중이라 전화를 받지 못했습니다. 문자 남겨주시면 확인 후 회신드리겠습니다.'),
+    { hint: '받지 못했을 때 나올 안내' }));
+  body.appendChild(etcCard);
+
+  // ── 통화 연결음 ──
+  var ringCard = el('div','card');
+  ringCard.appendChild(el('h3', null, '통화 연결음'));
+  var ringUseBox = selectField_('통화 연결음 사용', ['Y','N'], data['통화 연결음 사용'] || 'Y', {});
+  ringCard.appendChild(ringUseBox);
+  var ringWrap = el('div');
+  ringWrap.appendChild(field('연결음 멘트', 'textarea',
+    callVal_(data['연결음 멘트'], '안녕하세요, ' + shopName + '입니다. 이달의 첫방문 체험 이벤트를 진행 중입니다. 자세한 내용은 네이버 스마트플레이스에서 확인하실 수 있습니다. 잠시만 기다려 주세요.'),
+    { hint: '고객이 연결을 기다리는 동안 나옵니다. 홍보 문구를 넣을 수 있습니다' }));
+  ringWrap.appendChild(field('배경 음악', 'text', callVal_(data['배경 음악'], '잔잔하고 편안한 분위기'),
+    { hint: '선호하는 분위기를 적어주세요' }));
+  ringCard.appendChild(ringWrap);
+  body.appendChild(ringCard);
+
+  function syncRing(){ ringWrap.classList.toggle('hidden', ringUseBox.querySelector('select').value !== 'Y'); }
+  ringUseBox.querySelector('select').addEventListener('change', syncRing);
+  syncRing();
+};
+
+// StepCollectors.call 은 따로 없습니다 — 1차 연결 번호는 data-f 가 없어 수집 대상에서
+// 자연히 빠지고(수식 보호), 나머지는 전부 data-f(구분·항목 조합키 포함)로 노출돼 있어
+// collectStepData 의 기본 수집만으로 충분합니다.
 
 
 // ══════════════════════════════════════════════════════
